@@ -1,0 +1,39 @@
+name: Export Discord Chat
+
+on:
+  schedule:
+    - cron: "0 0 */3 * *"
+  workflow_dispatch: # allow manual run
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download DiscordChatExporter CLI
+        run: |
+          curl -L -o dce.zip https://github.com/Tyrrrz/DiscordChatExporter/releases/latest/download/DiscordChatExporter.Cli.linux-x64.zip
+          unzip dce.zip -d dce
+          chmod +x dce/DiscordChatExporter.Cli
+
+      - name: Export Discord channel
+        run: |
+          ./dce/DiscordChatExporter.Cli export \
+            -t "${{ secrets.DISCORD_TOKEN }}" \
+            -c 1395104687430045756 \
+            -o channel_export.json \
+            --format Json
+
+      - name: Run filter script
+        run: python wiki/channel.py
+
+      - name: Commit and push results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add channel_export.json output.json
+          git commit -m "Update exported Discord chat"
+          git push
