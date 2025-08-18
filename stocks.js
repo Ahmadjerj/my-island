@@ -1,10 +1,61 @@
 let stockData = [];
 let mainChart, distChart;
 let activeFilters = new Set();
-let filterMode = 'include'; // 'include' or 'exclude'
+let filterMode = 'include';
 let dateRange = { start: null, end: null };
+let tileVariantToBaseMap = {};
+
+//So you can see them in rarity and not in alphabitcal order
+const CUSTOM_RARITY_ORDER = [
+    "Trees",
+    "Flowers",
+    "Rocks",
+    "Farmland",
+    "Sand Pile",
+    "Farm",
+    "Sawmill",
+    "Grasslands",
+    "Crystal",
+    "Beach",
+    "Apple Tree",
+    "Glowing Mushroom",
+    "Basalt",
+    "Acid Rock",
+    "Ice",
+    "Citrus Tree",
+    "Magma",
+    "Moai",
+    "Disco",
+    "Radioactive"
+];
+
+// Helper function to format date for input fields
+function formatDateForInput(date) {
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+// UPDATED: Pre-computes a map from a specific tile variant name to its base tile NAME (string).
+function precomputeTileVariantMap() {
+    tileVariantToBaseMap = {};
+    for (const baseName in MASTER_TILE_DATABASE) {
+        const baseData = MASTER_TILE_DATABASE[baseName];
+        // Also map the base name itself, in case it appears in stock data
+        tileVariantToBaseMap[baseName] = baseName;
+        if (baseData.variants) {
+            for (const variant of baseData.variants) {
+                tileVariantToBaseMap[variant.name] = baseName;
+            }
+        }
+    }
+}
+
 
 document.addEventListener('DOMContentLoaded', async () => {
+    precomputeTileVariantMap(); // Pre-process rarity data
     try {
         const response = await fetch('output.json');
 
@@ -29,14 +80,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
+// UPDATED: This function now works with the modified tileVariantToBaseMap
 function getTileColor(tileName) {
+    const baseName = tileVariantToBaseMap[tileName];
+    if (baseName && MASTER_TILE_DATABASE[baseName]) {
+        return MASTER_TILE_DATABASE[baseName].color;
+    }
+    // Fallback for names not found in the map (should be rare)
     if (MASTER_TILE_DATABASE[tileName]) {
         return MASTER_TILE_DATABASE[tileName].color;
     }
-    const baseName = Object.keys(MASTER_TILE_DATABASE).find(key =>
-        MASTER_TILE_DATABASE[key].variants.some(v => v.name === tileName)
-    );
-    return baseName ? MASTER_TILE_DATABASE[baseName].color : TILE_COLORS.default;
+    return TILE_COLORS.default;
 }
 
 function parseStockData(rawData) {
@@ -128,6 +182,18 @@ function setupControls() {
     const startDateInput = document.getElementById('start-date');
     const endDateInput = document.getElementById('end-date');
     const clearDatesBtn = document.getElementById('clear-dates-btn');
+
+    if (stockData.length > 0) {
+        const minDate = stockData[0].timestamp;
+        const maxDate = stockData[stockData.length - 1].timestamp;
+        const minDateStr = formatDateForInput(minDate);
+        const maxDateStr = formatDateForInput(maxDate);
+
+        startDateInput.min = minDateStr;
+        startDateInput.max = maxDateStr;
+        endDateInput.min = minDateStr;
+        endDateInput.max = maxDateStr;
+    }
 
     dateRangeBtn.onclick = (e) => {
         e.stopPropagation();
@@ -238,7 +304,27 @@ function updateCharts() {
 function populateTileChips() {
     const container = document.getElementById('tile-chip-container');
     const allTileNames = new Set(stockData.flatMap(d => d.fields.map(f => f.name)));
-    const sortedNames = Array.from(allTileNames).sort();
+
+    // UPDATED: Sort tile names based on the custom order.
+    const sortedNames = Array.from(allTileNames).sort((a, b) => {
+        const baseNameA = tileVariantToBaseMap[a];
+        const baseNameB = tileVariantToBaseMap[b];
+
+        const indexA = CUSTOM_RARITY_ORDER.indexOf(baseNameA);
+        const indexB = CUSTOM_RARITY_ORDER.indexOf(baseNameB);
+
+        // Treat items not in the list as having a very high index so they go to the end
+        const sortOrderA = indexA === -1 ? Infinity : indexA;
+        const sortOrderB = indexB === -1 ? Infinity : indexB;
+
+        if (sortOrderA !== sortOrderB) {
+            return sortOrderA - sortOrderB;
+        }
+
+        // If they have the same base type (e.g., Small Tree vs Large Tree) or are both not in the list,
+        // sort them alphabetically by their specific variant name.
+        return a.localeCompare(b);
+    });
 
     container.innerHTML = '';
     sortedNames.forEach(name => {
@@ -246,7 +332,6 @@ function populateTileChips() {
         const chip = document.createElement('div');
         chip.className = 'chip';
         chip.dataset.tileName = name;
-        // This line is updated to include the color dot
         chip.innerHTML = `<span class="dot" style="background:${color};"></span> ${name}`;
         chip.onclick = () => {
             if (activeFilters.has(name)) {
@@ -313,7 +398,6 @@ function createRarityChart(totals) {
     });
 }
 
-// THIS FUNCTION IS NOW REVERTED to show individual stock values, with the integer axis fix applied.
 function createTimelineChart(data) {
     const ctx = document.getElementById('main-chart').getContext('2d');
     const datasets = {};
@@ -341,11 +425,27 @@ function createTimelineChart(data) {
         options: {
             responsive: true, maintainAspectRatio: false,
             scales: {
-                x: { type: 'time', time: { unit: 'day' }, ticks: { color: 'white' } },
+                x: {
+                    type: 'time',
+                    time: {
+                        tooltipFormat: 'PPpp', // Format for tooltips on hover
+                        displayFormats: {
+                            millisecond: 'HH:mm:ss.SSS',
+                            second: 'HH:mm:ss',
+                            minute: 'HH:mm',
+                            hour: 'MMM d, HH:mm',
+                            day: 'MMM d, yyyy',
+                            week: 'MMM d, yyyy',
+                            month: 'MMM yyyy',
+                            year: 'yyyy',
+                        }
+                    },
+                    ticks: { color: 'white' }
+                },
                 y: {
                     ticks: {
                         color: 'white',
-                        precision: 0 // Force whole numbers
+                        precision: 0
                     },
                     beginAtZero: true
                 }
@@ -354,8 +454,15 @@ function createTimelineChart(data) {
                 legend: { labels: { color: 'white' } },
                 tooltip: { mode: 'index', intersect: false },
                 zoom: {
-                    pan: { enabled: true, mode: 'x' },
-                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                    pan: {
+                        enabled: true,
+                        mode: 'x',
+                    },
+                    zoom: {
+                        wheel: { enabled: true },
+                        pinch: { enabled: true },
+                        mode: 'x'
+                    }
                 }
             }
         }
