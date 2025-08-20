@@ -1,6 +1,3 @@
-// Enhanced client-side JavaScript for accurate server age tracking
-// Since scraper runs every minute, first_seen should be within ~1-2 minutes of actual server start
-
 document.addEventListener('DOMContentLoaded', async () => {
     // --- CONFIG ---
     const SUPABASE_URL = 'https://hrsbvguvsrdrjcukbdlc.supabase.co';
@@ -14,9 +11,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const MAX_PLAYERS = 8;
     const JOINED_SERVER_GRACE_PERIOD = 45 * 60 * 1000; // 45 minutes in milliseconds
     const CYCLE_DURATION = WAIT_PERIOD + EVENT_DURATION; // 60 minutes total
-
-    // Account for scraper detection delay (servers might exist 0-2 minutes before detection)
-    const DETECTION_DELAY_BUFFER = 90; // 1.5 minutes in seconds
 
     // --- STATE ---
     let serverData = [];
@@ -35,6 +29,123 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const { createClient } = window.supabase;
     const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    // --- ROBLOX-STYLE GAME LAUNCH FUNCTIONS ---
+
+    /**
+     * Roblox-style game launching function
+     * This mimics how Roblox.com handles game launches
+     */
+    function launchRobloxGame(placeId, gameInstanceId = null) {
+        // Build the Roblox protocol URL
+        let robloxUrl;
+        if (gameInstanceId) {
+            // Join specific server
+            robloxUrl = `roblox://placeId=${placeId}&gameInstanceId=${gameInstanceId}`;
+        } else {
+            // Join any server
+            robloxUrl = `roblox://placeId=${placeId}`;
+        }
+
+        // Method 1: Roblox's primary approach - create invisible link and click it
+        // This is the most compatible method across browsers
+        const link = document.createElement('a');
+        link.href = robloxUrl;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+
+        try {
+            link.click();
+            // Clean up after a short delay
+            setTimeout(() => {
+                if (link.parentNode) {
+                    link.parentNode.removeChild(link);
+                }
+            }, 1000);
+            return true;
+        } catch (error) {
+            console.error('Failed to launch via link click:', error);
+            // Fallback to window.location.href
+            try {
+                window.location.href = robloxUrl;
+                return true;
+            } catch (fallbackError) {
+                console.error('Failed to launch via window.location:', fallbackError);
+                return false;
+            }
+        }
+    }
+
+    /**
+     * Alternative method that some third-party sites use
+     * Opens in a new tab/window to preserve the current page
+     */
+    function launchRobloxGameNewTab(placeId, gameInstanceId = null) {
+        let robloxUrl;
+        if (gameInstanceId) {
+            robloxUrl = `roblox://placeId=${placeId}&gameInstanceId=${gameInstanceId}`;
+        } else {
+            robloxUrl = `roblox://placeId=${placeId}`;
+        }
+
+        // Try to open in new tab first
+        const newTab = window.open(robloxUrl, '_blank');
+
+        // If blocked by popup blocker, fall back to current tab
+        if (!newTab || newTab.closed || typeof newTab.closed == 'undefined') {
+            console.log('Popup blocked, falling back to current tab');
+            return launchRobloxGame(placeId, gameInstanceId);
+        }
+
+        // Close the new tab after a short delay (it's just used to trigger the protocol)
+        setTimeout(() => {
+            if (newTab && !newTab.closed) {
+                newTab.close();
+            }
+        }, 2000);
+
+        return true;
+    }
+
+    /**
+     * Enhanced launch function with user feedback and error handling
+     */
+    function safeLaunchRobloxGame(placeId, gameInstanceId = null, serverDisplayName = '') {
+        const displayName = serverDisplayName || (gameInstanceId ? gameInstanceId.substring(0, 8) + '...' : 'Random Server');
+
+        // Show loading state
+        toast(`Launching Roblox... Joining ${displayName}`);
+
+        // Detect browser for optimal launch method
+        const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
+        const isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
+        const isSafari = /Safari/.test(navigator.userAgent) && /Apple Computer/.test(navigator.vendor);
+
+        let success = false;
+
+        // Use different methods based on browser
+        if (isChrome) {
+            // Chrome works best with the link click method (Roblox's preferred method)
+            success = launchRobloxGame(placeId, gameInstanceId);
+        } else if (isFirefox) {
+            // Firefox sometimes works better with window.open
+            success = launchRobloxGameNewTab(placeId, gameInstanceId);
+        } else {
+            // For other browsers, try the standard method
+            success = launchRobloxGame(placeId, gameInstanceId);
+        }
+
+        if (success) {
+            // Show success message after a delay
+            setTimeout(() => {
+                toast(`✓ Roblox should be launching. If it doesn't open, make sure Roblox is installed.`);
+            }, 1500);
+        } else {
+            toast(`❌ Failed to launch Roblox. Please make sure Roblox is installed and try again.`);
+        }
+
+        return success;
+    }
 
     // --- EVENT LISTENERS ---
     sortSelect?.addEventListener('change', (e) => { sortMode = e.target.value; updateAndRender(); });
@@ -65,9 +176,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             toast('Invalid Server ID format.');
             return;
         }
-        toast(`Attempting to join server: ${serverId.substring(0, 8)}...`);
-        window.location.href = `roblox://placeId=${PLACE_ID}&gameInstanceId=${serverId}`;
-        joinByIdInput.value = '';
+
+        // Use the enhanced Roblox-style launch function
+        const success = safeLaunchRobloxGame(PLACE_ID, serverId, `Server ${serverId.substring(0, 8)}`);
+
+        if (success) {
+            joinByIdInput.value = '';
+        }
     }
 
     async function fetchData() {
@@ -106,7 +221,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const now = Date.now();
         const firstSeenTime = new Date(server.first_seen).getTime();
 
-        // Use raw age without buffer - your scraper is accurate enough
+        // Use raw server age directly - scraper is accurate
         const serverAge = (now - firstSeenTime) / 1000;
 
         let status = {
@@ -316,8 +431,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         saveJoinedServers();
 
-        toast(`Joining Server: ${serverId.substring(0, 8)}...`);
-        window.location.href = `roblox://placeId=${PLACE_ID}&gameInstanceId=${serverId}`;
+        // Use the enhanced Roblox-style launch function
+        safeLaunchRobloxGame(PLACE_ID, serverId, `Server ${serverId.substring(0, 8)}`);
         updateAndRender();
     }
 
