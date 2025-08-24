@@ -77,15 +77,22 @@
               <label for="sort-select">Sort by:</label>
               <div class="custom-select-wrapper">
                   <select id="sort-select">
+                      <option value="join_order" style="display: none;">Join Order</option>
                       <option value="soonest">Soonest Event</option>
                       <option value="furthest">Furthest Event</option>
-                      <option value="join_order">Join Order</option>
                       <option value="player_high">Players (High to Low)</option>
                       <option value="player_low">Players (Low to High)</option>
                       <option value="oldest">Server Age (Oldest)</option>
                       <option value="newest">Server Age (Newest)</option>
                   </select>
               </div>
+          </div>
+          <div class="control-group">
+              <label for="toggle-full-servers">Show Full Servers:</label>
+              <label class="toggle-switch">
+                  <input type="checkbox" id="toggle-full-servers">
+                  <span class="slider"></span>
+              </label>
           </div>
       </div>
 

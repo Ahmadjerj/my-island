@@ -5,17 +5,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     const PLACE_ID = '118648755816733';
 
     // --- TIMER LOGIC ---
-    const WAIT_PERIOD = 45 * 60;    // 45 minutes in seconds
-    const EVENT_DURATION = 15 * 60; // 15 minutes in seconds
-    const WARNING_PERIOD = 5 * 60;  // 5 minutes warning
+    const WAIT_PERIOD = 45 * 60;
+    const EVENT_DURATION = 15 * 60;
+    const CYCLE_DURATION = WAIT_PERIOD + EVENT_DURATION;
+    const WARNING_PERIOD = 5 * 60;
     const MAX_PLAYERS = 8;
-    const JOINED_SERVER_GRACE_PERIOD = 45 * 60 * 1000; // 45 minutes in milliseconds
-    const CYCLE_DURATION = WAIT_PERIOD + EVENT_DURATION; // 60 minutes total
 
     // --- STATE ---
     let serverData = [];
     let sortMode = 'soonest';
+    let previousSortMode = 'soonest';
     let filterMode = 'all';
+    let showFullServers = false;
     let joinedServers = new Map();
 
     // --- UI ELEMENTS ---
@@ -26,324 +27,220 @@ document.addEventListener('DOMContentLoaded', async () => {
     const filterButtonsContainer = document.getElementById('filter-buttons');
     const joinByIdInput = document.getElementById('join-by-id-input');
     const joinByIdBtn = document.getElementById('join-by-id-btn');
+    const fullServersToggle = document.getElementById('toggle-full-servers');
 
     const { createClient } = window.supabase;
     const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    // --- ROBLOX-STYLE GAME LAUNCH FUNCTIONS ---
-
-    /**
-     * Roblox-style game launching function
-     * This mimics how Roblox.com handles game launches
-     */
+    // --- ROBLOX LAUNCH FUNCTIONS ---
     function launchRobloxGame(placeId, gameInstanceId = null) {
-        // Build the Roblox protocol URL
-        let robloxUrl;
-        if (gameInstanceId) {
-            // Join specific server
-            robloxUrl = `roblox://placeId=${placeId}&gameInstanceId=${gameInstanceId}`;
-        } else {
-            // Join any server
-            robloxUrl = `roblox://placeId=${placeId}`;
-        }
-
-        // Method 1: Roblox's primary approach - create invisible link and click it
-        // This is the most compatible method across browsers
-        const link = document.createElement('a');
-        link.href = robloxUrl;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-
-        try {
-            link.click();
-            // Clean up after a short delay
-            setTimeout(() => {
-                if (link.parentNode) {
-                    link.parentNode.removeChild(link);
-                }
-            }, 1000);
-            return true;
-        } catch (error) {
-            console.error('Failed to launch via link click:', error);
-            // Fallback to window.location.href
-            try {
-                window.location.href = robloxUrl;
-                return true;
-            } catch (fallbackError) {
-                console.error('Failed to launch via window.location:', fallbackError);
-                return false;
-            }
-        }
+        const robloxUrl = gameInstanceId ? `roblox://placeId=${placeId}&gameInstanceId=${gameInstanceId}` : `roblox://placeId=${placeId}`;
+        const link = document.createElement('a'); link.href = robloxUrl; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     }
 
-    /**
-     * Alternative method that some third-party sites use
-     * Opens in a new tab/window to preserve the current page
-     */
-    function launchRobloxGameNewTab(placeId, gameInstanceId = null) {
-        let robloxUrl;
-        if (gameInstanceId) {
-            robloxUrl = `roblox://placeId=${placeId}&gameInstanceId=${gameInstanceId}`;
-        } else {
-            robloxUrl = `roblox://placeId=${placeId}`;
-        }
-
-        // Try to open in new tab first
-        const newTab = window.open(robloxUrl, '_blank');
-
-        // If blocked by popup blocker, fall back to current tab
-        if (!newTab || newTab.closed || typeof newTab.closed == 'undefined') {
-            console.log('Popup blocked, falling back to current tab');
-            return launchRobloxGame(placeId, gameInstanceId);
-        }
-
-        // Close the new tab after a short delay (it's just used to trigger the protocol)
-        setTimeout(() => {
-            if (newTab && !newTab.closed) {
-                newTab.close();
-            }
-        }, 2000);
-
-        return true;
-    }
-
-    /**
-     * Enhanced launch function with user feedback and error handling
-     */
+    // Just wraps the launch function so it doesn't crash everything if something goes wrong
     function safeLaunchRobloxGame(placeId, gameInstanceId = null, serverDisplayName = '') {
         const displayName = serverDisplayName || (gameInstanceId ? gameInstanceId.substring(0, 8) + '...' : 'Random Server');
-
-        // Show loading state
         toast(`Launching Roblox... Joining ${displayName}`);
-
-        // Detect browser for optimal launch method
-        const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
-        const isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
-        const isSafari = /Safari/.test(navigator.userAgent) && /Apple Computer/.test(navigator.vendor);
-
-        let success = false;
-
-        // Use different methods based on browser
-        if (isChrome) {
-            // Chrome works best with the link click method (Roblox's preferred method)
-            success = launchRobloxGame(placeId, gameInstanceId);
-        } else if (isFirefox) {
-            // Firefox sometimes works better with window.open
-            success = launchRobloxGameNewTab(placeId, gameInstanceId);
-        } else {
-            // For other browsers, try the standard method
-            success = launchRobloxGame(placeId, gameInstanceId);
+        try {
+            launchRobloxGame(placeId, gameInstanceId);
+            setTimeout(() => { toast(`✓ Roblox should be launching.`); }, 1500);
+            return true;
+        } catch (error) {
+            console.error('Failed to launch Roblox:', error);
+            toast(`❌ Failed to launch Roblox.`);
+            return false;
         }
-
-        if (success) {
-            // Show success message after a delay
-            setTimeout(() => {
-                toast(`✓ Roblox should be launching. If it doesn't open, make sure Roblox is installed.`);
-            }, 1500);
-        } else {
-            toast(`❌ Failed to launch Roblox. Please make sure Roblox is installed and try again.`);
-        }
-
-        return success;
     }
 
     // --- EVENT LISTENERS ---
-    sortSelect?.addEventListener('change', (e) => { sortMode = e.target.value; updateAndRender(); });
+    sortSelect?.addEventListener('change', (e) => {
+        const newSortMode = e.target.value;
+        if (!newSortMode) return;
+        sortMode = newSortMode;
+        if (newSortMode !== 'join_order') {
+            previousSortMode = newSortMode;
+        }
+        updateAndRender(true); // Force a full re-render on sort change
+    });
+
+    joinByIdBtn?.addEventListener('click', joinById);
+    joinByIdInput?.addEventListener('keypress', (e) => { if (e.key === 'Enter') joinById(); });
+    fullServersToggle?.addEventListener('change', (e) => {
+        showFullServers = e.target.checked;
+        updateAndRender(true); // Force a full re-render on filter change
+    });
+
     filterButtonsContainer?.addEventListener('click', (e) => {
         const button = e.target.closest('.chip');
         if (!button) return;
-        filterMode = button.dataset.filter;
+        const newFilterMode = button.dataset.filter;
+        if (filterMode === newFilterMode) return;
+        filterMode = newFilterMode;
         filterButtonsContainer.querySelectorAll('.chip').forEach(btn => btn.classList.remove('active'));
         button.classList.add('active');
-        updateAndRender();
+        if (filterMode === 'joined') {
+            sortMode = 'join_order';
+        } else {
+            if (sortMode === 'join_order') {
+                sortMode = previousSortMode;
+            }
+        }
+        rebuildSortOptions();
+        updateAndRender(true); // Force a full re-render on filter change
     });
-    joinByIdBtn?.addEventListener('click', joinById);
-    joinByIdInput?.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') joinById();
-    });
+
+    // --- DROPDOWN REBUILDER ---
+    // Rebuilds the dropdown menu when filter changes - clears it and adds options back
+    function rebuildSortOptions() {
+        const baseOptions = {
+            'soonest': 'Soonest Event',
+            'furthest': 'Furthest Event',
+            'player_high': 'Players (High to Low)',
+            'player_low': 'Players (Low to High)',
+            'oldest': 'Server Age (Oldest)',
+            'newest': 'Server Age (Newest)'
+        };
+        sortSelect.innerHTML = '';
+        if (filterMode === 'joined') {
+            const opt = document.createElement('option');
+            opt.value = 'join_order';
+            opt.textContent = 'Join Order';
+            sortSelect.appendChild(opt);
+        }
+        for (const [value, text] of Object.entries(baseOptions)) {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.textContent = text;
+            sortSelect.appendChild(opt);
+        }
+        sortSelect.value = sortMode;
+        if (typeof window.initializeCustomSelects === 'function') {
+            window.initializeCustomSelects();
+        }
+    }
 
     // --- MAIN EXECUTION ---
     loadJoinedServers();
     await fetchData();
-    initializeCustomSelects();
-    setInterval(updateAndRender, 1000);
+    rebuildSortOptions();
+    setInterval(() => updateAndRender(false), 1000); // Smart updates every second
     setInterval(fetchData, 30 * 1000);
 
-    // --- FUNCTIONS ---
     function joinById() {
         const serverId = joinByIdInput.value.trim();
-        if (serverId.length < 36) {
-            toast('Invalid Server ID format.');
-            return;
-        }
-
-        // Use the enhanced Roblox-style launch function
-        const success = safeLaunchRobloxGame(PLACE_ID, serverId, `Server ${serverId.substring(0, 8)}`);
-
-        if (success) {
+        if (serverId.length < 36) { return toast('Invalid Server ID format.'); }
+        if (safeLaunchRobloxGame(PLACE_ID, serverId)) {
             joinByIdInput.value = '';
         }
     }
 
+    // Gets data from database and removes duplicates - keeps the newest one if server appears twice
     async function fetchData() {
         try {
-            // Only fetch servers that are:
-            // 1. Currently active (not inactive/dead)
-            // 2. Fresh data (seen in last scraper run - cycles_since_seen = 0)
-            const { data, error } = await sb
-                .from('servers')
-                .select('*')
-                .eq('status', 'active')
-                .eq('cycles_since_seen', 0);
-
+            const { data, error } = await sb.from('servers').select('*').eq('status', 'active').eq('cycles_since_seen', 0);
             if (error) throw error;
 
-            // Additional safety filters on the client side
-            serverData = (data || [])
-                .filter(s => s.status === 'active') // Double-check status
-                .filter(s => s.cycles_since_seen === 0) // Double-check freshness
-                .filter(s => s.player_count < MAX_PLAYERS) // Not full
-                .filter(s => s.player_count >= 0); // Valid player count
+            // Remove duplicates by keeping the most recent one per server_id
+            const serverMap = new Map();
+            for (const server of data) {
+                if (!serverMap.has(server.server_id) || new Date(server.first_seen) > new Date(serverMap.get(server.server_id).first_seen)) {
+                    serverMap.set(server.server_id, server);
+                }
+            }
 
-            console.log(`Fetched ${serverData.length} valid servers`);
-
+            const cleanedData = Array.from(serverMap.values());
+            serverData = cleanedData.filter(s => s.player_count <= MAX_PLAYERS && s.player_count >= 0);
             loadingContainer.style.display = 'none';
             serverListContainer.style.display = 'flex';
             errorContainer.style.display = 'none';
-            updateAndRender();
+            updateAndRender(true); // Force full re-render after fetching new data
         } catch (err) {
             console.error('Error fetching data:', err);
-            showError(`Failed to fetch server data: ${err.message}. Ensure RLS is enabled.`);
+            showError(`Failed to fetch server data: ${err.message}.`);
         }
     }
 
+    // Figures out what phase the event is in based on how long the server has been up
     function getEventStatus(server) {
-        const now = Date.now();
+        const now = Date.now() + 1000;
         const firstSeenTime = new Date(server.first_seen).getTime();
-
-        // Use raw server age directly - scraper is accurate
         const serverAge = (now - firstSeenTime) / 1000;
+        let status = { rawAge: serverAge, age: serverAge };
 
-        let status = {
-            age: serverAge,
-            rawAge: serverAge,
-            cycles_since_seen: server.cycles_since_seen
-        };
+        // Use modulo to figure out where we are in the cycle
+        const timeWithinCycle = serverAge % CYCLE_DURATION;
 
-        if (serverAge < WAIT_PERIOD) {
-            // Server is less than 45 minutes old - no event yet
-            status.phase = 'far';
+        if (timeWithinCycle < WAIT_PERIOD) {
+            const timeUntilEvent = WAIT_PERIOD - timeWithinCycle;
+            status.phase = timeUntilEvent <= WARNING_PERIOD ? 'starting_soon' : 'far';
             status.timeLabel = 'Arrives In:';
-            status.timeRemaining = WAIT_PERIOD - serverAge;
+            status.timeRemaining = timeUntilEvent;
         } else {
-            // Server is 45+ minutes old
-            // The 45min timer continues running even during the 15min event
-            const continuousTimer = serverAge % WAIT_PERIOD; // Position in the continuous 45min cycle
-            const timeUntilNextEvent = WAIT_PERIOD - continuousTimer;
-
-            // Check if we're currently in an event period
-            const timeSinceFirstEvent = serverAge - WAIT_PERIOD;
-            const isInEventPeriod = timeSinceFirstEvent >= 0 && (timeSinceFirstEvent % WAIT_PERIOD) < EVENT_DURATION;
-
-            if (isInEventPeriod) {
-                // Event is currently active
-                const timeInCurrentEvent = timeSinceFirstEvent % WAIT_PERIOD;
-                status.phase = 'active';
-                status.timeLabel = 'Leaves In:';
-                status.timeRemaining = EVENT_DURATION - timeInCurrentEvent;
-            } else {
-                // Waiting for next event
-                status.phase = timeUntilNextEvent <= WARNING_PERIOD ? 'starting_soon' : 'far';
-                status.timeLabel = 'Arrives In:';
-                status.timeRemaining = timeUntilNextEvent;
-            }
-
-            // Debug logging
-            console.log(`Debug - Age: ${Math.floor(serverAge/60)}min, ContinuousTimer: ${Math.floor(continuousTimer/60)}min, TimeUntilNext: ${Math.floor(timeUntilNextEvent/60)}min, InEvent: ${isInEventPeriod}`);
+            const timeInEvent = timeWithinCycle - WAIT_PERIOD;
+            status.phase = 'active';
+            status.timeLabel = 'Leaves In:';
+            status.timeRemaining = EVENT_DURATION - timeInEvent;
         }
 
-        // Add timing confidence indicator
         status.confidence = calculateTimingConfidence(server, status);
-
         return { ...server, ...status };
     }
 
+    // Tries to guess how reliable the timing is based on player count and server age
     function calculateTimingConfidence(server, status) {
-        // High confidence: Fresh server with reasonable player count for age
-        // Medium confidence: Older server or unusual player count
-        // Low confidence: Very high player count for young server (might have existed before detection)
-
         const ageMinutes = status.rawAge / 60;
         const playersPerMinute = server.player_count / Math.max(ageMinutes, 1);
 
-        if (server.cycles_since_seen > 0) return 'low'; // Stale data
-        if (ageMinutes < 10 && playersPerMinute > 1) return 'medium'; // Fast growth might indicate pre-existing server
-        if (ageMinutes < 5 && server.player_count > 6) return 'low'; // Too many players for very young server
-
+        // Check the obvious bad cases first
+        if (server.cycles_since_seen > 0) return 'low';
+        if (ageMinutes < 10 && playersPerMinute > 1) return 'medium';
+        if (ageMinutes < 5 && server.player_count > 6) return 'low';
         return 'high';
     }
 
-    function updateAndRender() {
+    // Main function that filters, sorts, and decides whether to redraw everything or just update text
+    function updateAndRender(forceFullRender = false) {
         if (!serverData.length) return;
 
+        // Run all servers through the event status calculator
         let processed = serverData.map(getEventStatus);
-
-        // Clean up joined servers list
-        const serversToDelete = [];
-        joinedServers.forEach((data, serverId) => {
-            const currentServer = processed.find(s => s.server_id === serverId);
-            const timeSinceJoined = Date.now() - data.joinedAt;
-
-            if (!currentServer || timeSinceJoined > JOINED_SERVER_GRACE_PERIOD) {
-                serversToDelete.push(serverId);
-            }
-        });
-
-        if (serversToDelete.length > 0) {
-            serversToDelete.forEach(serverId => joinedServers.delete(serverId));
-            saveJoinedServers();
-        }
-
-        // Add joined status to processed servers
-        processed = processed.map(server => ({
-            ...server,
-            joinedAt: joinedServers.get(server.server_id)?.joinedAt || 0
-        }));
-
-        // Apply filters
         let displayList;
+
+        // Different filtering logic depending on what view we're in
         if (filterMode === 'joined') {
-            displayList = processed.filter(s => joinedServers.has(s.server_id));
-        } else if (filterMode !== 'all') {
-            displayList = processed.filter(s => s.phase === filterMode && !joinedServers.has(s.server_id));
+            displayList = processed.filter(s => joinedServers.has(s.server_id))
+                .map(s => ({ ...s, joinedAt: joinedServers.get(s.server_id).joinedAt }));
         } else {
-            displayList = processed.filter(s => !joinedServers.has(s.server_id));
+            let filteredByFull = showFullServers ? processed : processed.filter(s => s.player_count < MAX_PLAYERS);
+            displayList = filteredByFull.filter(s => !joinedServers.has(s.server_id));
+            if (filterMode !== 'all') {
+                displayList = displayList.filter(s => s.phase === filterMode);
+            }
         }
 
-        // Apply sorting
+        // Sort based on whatever mode is selected - basically a big switch statement
         displayList.sort((a, b) => {
             switch (sortMode) {
                 case 'oldest': return b.age - a.age;
                 case 'newest': return a.age - b.age;
                 case 'player_high': return b.player_count - a.player_count;
                 case 'player_low': return a.player_count - b.player_count;
-                case 'join_order':
-                    if (filterMode !== 'joined') return 0;
-                    return b.joinedAt - a.joinedAt;
-                case 'furthest':
-                    if (a.phase !== 'active' && b.phase === 'active') return -1;
-                    if (a.phase === 'active' && b.phase !== 'active') return 1;
-                    return b.timeRemaining - a.timeRemaining;
-                case 'soonest':
-                default:
-                    if (a.phase === 'active' && b.phase !== 'active') return -1;
-                    if (a.phase !== 'active' && b.phase === 'active') return 1;
-                    return a.timeRemaining - b.timeRemaining;
+                case 'join_order': return (b.joinedAt || 0) - (a.joinedAt || 0);
+                case 'soonest': return a.timeRemaining - b.timeRemaining;
+                case 'furthest': return b.timeRemaining - a.timeRemaining;
+                default: return 0;
             }
         });
 
         renderStats(processed);
-        renderServers(displayList, filterMode === 'joined');
+
+        // Only rebuild the whole thing if we have to - otherwise just update the text to avoid flicker
+        if (forceFullRender || serverListContainer.children.length !== displayList.length) {
+            fullRenderServers(displayList);
+        } else {
+            smartUpdateServers(displayList); // Only update text content to prevent flicker
+        }
     }
 
     function renderStats(allServers) {
@@ -353,148 +250,99 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('total-servers').textContent = allServers.length;
     }
 
-    function renderServers(servers, isJoinedList) {
-        serverListContainer.innerHTML = '';
+    // Optimized update path - modifies existing DOM nodes instead of recreating them
+    // Prevents hover state loss during updates (like maintaining widget focus)
+    function smartUpdateServers(servers) {
+        servers.forEach((server, index) => {
+            const card = serverListContainer.children[index];
+            if (!card || card.id !== `server-${server.server_id}`) {
+                 // Order mismatch detected - fall back to full rebuild
+                fullRenderServers(servers);
+                return;
+            }
+            // Update only dynamic content - similar to invalidating specific regions
+            card.className = `server-card status-${server.phase} confidence-${server.confidence}`;
+            card.querySelector('.server-player-count').textContent = `${server.player_count}/${MAX_PLAYERS} Players`;
+            card.querySelector('.server-timer').textContent = `${server.timeLabel} ${formatTime(server.timeRemaining)}`;
+            card.querySelector('.server-age').textContent = `Age: ${formatAge(server.rawAge)}`;
+        });
+    }
+
+    // Full DOM reconstruction - clears and rebuilds entire container
+    function fullRenderServers(servers) {
+        serverListContainer.innerHTML = ''; // Clear everything
         if (servers.length === 0) {
             serverListContainer.innerHTML = `<div class="info-box" style="width:100%; text-align:center;">No servers match the current filter.</div>`;
             return;
         }
-        servers.forEach(server => serverListContainer.appendChild(createServerCard(server, isJoinedList)));
+        servers.forEach(server => serverListContainer.appendChild(createServerCard(server, filterMode === 'joined')));
 
+        // Reattach event handlers after DOM reconstruction - similar to reconnecting callbacks
         document.querySelectorAll('.join-btn').forEach(btn => btn.addEventListener('click', handleJoinClick));
         document.querySelectorAll('.return-btn').forEach(btn => btn.addEventListener('click', handleReturnClick));
         document.querySelectorAll('.copy-id-icon-btn').forEach(el => el.addEventListener('click', handleCopyId));
     }
 
+    // DOM element factory - constructs server card with embedded data attributes
     function createServerCard(server, isJoined) {
         const card = document.createElement('div');
         card.className = `server-card status-${server.phase} confidence-${server.confidence}`;
         card.id = `server-${server.server_id}`;
 
-        // Add confidence indicator for timing accuracy
         let confidenceHTML = '';
-        if (server.confidence === 'medium') {
-            confidenceHTML = `<span class="info-item warning-info" title="Timing might be slightly inaccurate">
-                <svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>~
-            </span>`;
-        } else if (server.confidence === 'low') {
-            confidenceHTML = `<span class="info-item error-info" title="Timing may be inaccurate - server might be older than displayed">
-                <svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>?
-            </span>`;
-        }
+        if (server.confidence === 'medium') confidenceHTML = `...`;
+        if (server.confidence === 'low') confidenceHTML = `...`;
 
         const joinButtonHTML = `<button class="btn btn-success join-btn" data-server-id="${server.server_id}">Join</button>`;
         const returnButtonHTML = isJoined ? `<button class="btn btn-warning return-btn" data-server-id="${server.server_id}">Return</button>` : '';
+        const copyElementHTML = `<div class="server-id-container"><span title="${server.server_id}">ID: ${server.server_id}</span><button class="copy-id-icon-btn" title="Copy Server ID" data-server-id="${server.server_id}"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button></div>`;
 
-        const copyElementHTML = `
-            <div class="server-id-container">
-                <span title="${server.server_id}">ID: ${server.server_id}</span>
-                <button class="copy-id-icon-btn" title="Copy Server ID" data-server-id="${server.server_id}">
-                    <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                </button>
-            </div>`;
-
-        card.innerHTML = `
-            <div class="server-card-main">
-                <div class="status-dot"></div>
-                <div class="server-details">
-                    <div class="server-info">
-                        <span class="info-item" title="Player Count">${server.player_count}/${MAX_PLAYERS} Players</span>
-                        <span class="info-item" title="Event Timer">${server.timeLabel} ${formatTime(server.timeRemaining)}</span>
-                        ${confidenceHTML}
-                    </div>
-                    <div class="server-meta-info">
-                        <span>Age: ${formatAge(server.rawAge)} ${server.rawAge !== server.age ? '(~' + formatAge(server.age) + ')' : ''}</span>
-                        ${copyElementHTML}
-                    </div>
+        card.innerHTML = `<div class="server-card-main">
+            <div class="status-dot"></div>
+            <div class="server-details">
+                <div class="server-info">
+                    <span class="info-item server-player-count">${server.player_count}/${MAX_PLAYERS} Players</span>
+                    <span class="info-item server-timer">${server.timeLabel} ${formatTime(server.timeRemaining)}</span>
+                    ${confidenceHTML}
+                </div>
+                <div class="server-meta-info">
+                    <span class="server-age">Age: ${formatAge(server.rawAge)}</span>
+                    ${copyElementHTML}
                 </div>
             </div>
-            <div class="server-actions">
-                ${joinButtonHTML}
-                ${returnButtonHTML}
-            </div>`;
+        </div>
+        <div class="server-actions">${joinButtonHTML}${returnButtonHTML}</div>`;
         return card;
     }
 
+    // Event handlers with data attribute extraction - similar to signal/slot pattern
     function handleJoinClick(e) {
         const serverId = e.target.dataset.serverId;
-        const server = serverData.find(s => s.server_id === serverId);
-        if (!server) return;
-
-        const card = document.getElementById(`server-${serverId}`);
-        card?.classList.add('highlighted');
-        setTimeout(() => card?.classList.remove('highlighted'), 5000);
-
-        joinedServers.set(serverId, {
-            phase: getEventStatus(server).phase,
-            joinedAt: Date.now()
-        });
+        joinedServers.set(serverId, { joinedAt: Date.now() });
         saveJoinedServers();
-
-        // Use the enhanced Roblox-style launch function
-        safeLaunchRobloxGame(PLACE_ID, serverId, `Server ${serverId.substring(0, 8)}`);
-        updateAndRender();
+        safeLaunchRobloxGame(PLACE_ID, serverId);
+        updateAndRender(true);
     }
 
     function handleReturnClick(e) {
         joinedServers.delete(e.target.dataset.serverId);
         saveJoinedServers();
-        updateAndRender();
+        updateAndRender(true);
     }
 
     function handleCopyId(e) {
         const serverId = e.currentTarget.dataset.serverId;
-        navigator.clipboard.writeText(serverId).then(() => {
-            toast(`Copied Server ID: ${serverId.substring(0, 8)}...`);
-        }).catch(err => {
-            console.error('Failed to copy text: ', err);
-            toast('Failed to copy ID.');
-        });
+        navigator.clipboard.writeText(serverId).then(() => toast(`Copied Server ID`));
     }
 
-    function saveJoinedServers() {
-        localStorage.setItem('joinedMerchantServers', JSON.stringify(Array.from(joinedServers.entries())));
-    }
+    // Persistence layer - serializes Map to JSON for localStorage
+    function saveJoinedServers() { localStorage.setItem('joinedMerchantServers', JSON.stringify(Array.from(joinedServers.entries()))); }
+    function loadJoinedServers() { const stored = localStorage.getItem('joinedMerchantServers'); if (stored) { joinedServers = new Map(JSON.parse(stored)); } }
+    function showError(msg) { errorContainer.innerHTML = `<div class="info-box error-box">${msg}</div>`; errorContainer.style.display = 'block'; }
 
-    function loadJoinedServers() {
-        const stored = localStorage.getItem('joinedMerchantServers');
-        if (stored) {
-            joinedServers = new Map(JSON.parse(stored));
-        }
-    }
-
-    function showError(msg) {
-        errorContainer.innerHTML = `<div class="info-box error-box">${msg}</div>`;
-        errorContainer.style.display = 'block';
-    }
-
-    function formatTime(s) {
-        const minutes = Math.floor(Math.abs(s) / 60);
-        const seconds = Math.floor(Math.abs(s) % 60);
-        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
-
-    function formatAge(s) {
-        const hours = Math.floor(s / 3600);
-        const minutes = Math.floor((s % 3600) / 60);
-        return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-    }
-
-    // Initialize custom selects if the function exists
-    function initializeCustomSelects() {
-        // This function should be defined elsewhere in your code
-        if (typeof window.initializeCustomSelects === 'function') {
-            window.initializeCustomSelects();
-        }
-    }
-
-    // Toast notification function
-    function toast(message) {
-        // This function should be defined elsewhere in your code
-        if (typeof window.toast === 'function') {
-            window.toast(message);
-        } else {
-            console.log('Toast:', message);
-        }
-    }
+    // Time formatting utilities - bounds checking and zero-padding
+    function formatTime(s) { const totalSeconds = Math.ceil(Math.max(0, s)); const m = Math.floor(totalSeconds / 60); const sec = totalSeconds % 60; return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`; }
+    function formatAge(s) { const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return h > 0 ? `${h}h ${m}m` : `${m}m`; }
+    function initializeCustomSelects() { if (typeof window.initializeCustomSelects === 'function') { window.initializeCustomSelects(); } }
+    function toast(message) { if (typeof window.toast === 'function') { window.toast(message); } else { console.log('Toast:', message); } }
 });

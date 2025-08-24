@@ -1348,30 +1348,32 @@ function toast(msg) {
     }, 2500);
 }
 
+// Function to destroy existing custom select elements
+function destroyCustomSelects() {
+    document.querySelectorAll('.custom-select-wrapper').forEach(wrapper => {
+        const selectedDiv = wrapper.querySelector('.select-selected');
+        const itemsDiv = wrapper.querySelector('.select-items');
+        if (selectedDiv) selectedDiv.remove();
+        if (itemsDiv) itemsDiv.remove();
+    });
+}
+
 function initializeCustomSelects() {
+    // Before creating new ones, destroy any existing custom dropdowns to prevent duplicates.
+    destroyCustomSelects();
+
     document.querySelectorAll('.custom-select-wrapper').forEach(wrapper => {
         const select = wrapper.querySelector('select');
-        if (!select || wrapper.querySelector('.select-selected')) return;
+        if (!select) return; // If there's no select, do nothing.
+
         const selectedDiv = document.createElement('div');
         selectedDiv.className = 'select-selected';
         selectedDiv.innerHTML = select.options[select.selectedIndex]?.innerHTML || '&nbsp;';
         wrapper.appendChild(selectedDiv);
         const itemsDiv = document.createElement('div');
         itemsDiv.className = 'select-items select-hide';
-        const searchInput = document.createElement('input');
-        searchInput.type = 'text';
-        searchInput.className = 'select-search';
-        searchInput.placeholder = 'Search...';
-        searchInput.addEventListener('click', e => e.stopPropagation());
-        searchInput.addEventListener('input', () => {
-            const filter = searchInput.value.toLowerCase();
-            const options = itemsDiv.querySelectorAll('.select-option');
-            options.forEach(option => {
-                option.style.display = option.textContent.toLowerCase().includes(filter) ? "" : "none";
-            });
-        });
-        itemsDiv.appendChild(searchInput);
         for (let i = 0; i < select.options.length; i++) {
+            if (select.options[i].style.display === 'none') continue; // Skip hidden options
             const optionDiv = document.createElement('div');
             optionDiv.className = 'select-option';
             optionDiv.innerHTML = select.options[i].innerHTML;
@@ -1398,14 +1400,11 @@ function initializeCustomSelects() {
             const items = this.nextSibling;
             items.classList.toggle('select-hide');
             this.classList.toggle('select-arrow-active');
-            if (!items.classList.contains('select-hide')) {
-                items.querySelector('.select-search').value = '';
-                items.querySelectorAll('.select-option').forEach(opt => opt.style.display = '');
-                items.querySelector('.select-search').focus();
-            }
+
         });
     });
 }
+
 
 function closeAllSelect(elmnt) {
     document.querySelectorAll('.select-items').forEach(item => {
@@ -1415,6 +1414,17 @@ function closeAllSelect(elmnt) {
         if (elmnt !== sel) sel.classList.remove('select-arrow-active');
     });
 }
+
+// Global function to update a specific custom select's display
+function updateCustomSelectDisplay(selectElement) {
+    const wrapper = selectElement.closest('.custom-select-wrapper');
+    if (!wrapper) return;
+    const selectedDiv = wrapper.querySelector('.select-selected');
+    if (selectedDiv) {
+        selectedDiv.innerHTML = selectElement.options[selectElement.selectedIndex]?.innerHTML || '&nbsp;';
+    }
+}
+
 
 function debounce(fn, ms) {
     let t;
