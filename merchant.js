@@ -5,11 +5,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const PLACE_ID = '118648755816733';
 
     // --- TIMER LOGIC ---
-    const WAIT_PERIOD = 45 * 60;
-    const EVENT_DURATION = 15 * 60;
-    const CYCLE_DURATION = WAIT_PERIOD + EVENT_DURATION;
-    const WARNING_PERIOD = 5 * 60;
+    const BACKGROUND_TIMER_CYCLE = 45 * 60; // 45 minutes - the continuous background timer
+    const EVENT_DURATION = 15 * 60; // 15 minutes - but can vary (15-16 minutes in reality)
+    const WARNING_PERIOD = 5 * 60;  // 5 minutes warning before event
     const MAX_PLAYERS = 8;
+    const JOINED_SERVER_GRACE_PERIOD = 45 * 60 * 1000; // 45 minutes in milliseconds
 
     // --- STATE ---
     let serverData = [];
@@ -35,10 +35,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- ROBLOX LAUNCH FUNCTIONS ---
     function launchRobloxGame(placeId, gameInstanceId = null) {
         const robloxUrl = gameInstanceId ? `roblox://placeId=${placeId}&gameInstanceId=${gameInstanceId}` : `roblox://placeId=${placeId}`;
-        const link = document.createElement('a'); link.href = robloxUrl; document.body.appendChild(link); link.click(); document.body.removeChild(link);
+        const link = document.createElement('a');
+        link.href = robloxUrl;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     }
 
-    // Just wraps the launch function so it doesn't crash everything if something goes wrong
     function safeLaunchRobloxGame(placeId, gameInstanceId = null, serverDisplayName = '') {
         const displayName = serverDisplayName || (gameInstanceId ? gameInstanceId.substring(0, 8) + '...' : 'Random Server');
         toast(`Launching Roblox... Joining ${displayName}`);
@@ -61,14 +64,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (newSortMode !== 'join_order') {
             previousSortMode = newSortMode;
         }
-        updateAndRender(true); // Force a full re-render on sort change
+        updateAndRender(true);
     });
 
     joinByIdBtn?.addEventListener('click', joinById);
     joinByIdInput?.addEventListener('keypress', (e) => { if (e.key === 'Enter') joinById(); });
     fullServersToggle?.addEventListener('change', (e) => {
         showFullServers = e.target.checked;
-        updateAndRender(true); // Force a full re-render on filter change
+        updateAndRender(true);
     });
 
     filterButtonsContainer?.addEventListener('click', (e) => {
@@ -87,11 +90,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
         rebuildSortOptions();
-        updateAndRender(true); // Force a full re-render on filter change
+        updateAndRender(true);
     });
 
     // --- DROPDOWN REBUILDER ---
-    // Rebuilds the dropdown menu when filter changes - clears it and adds options back
     function rebuildSortOptions() {
         const baseOptions = {
             'soonest': 'Soonest Event',
@@ -124,7 +126,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadJoinedServers();
     await fetchData();
     rebuildSortOptions();
-    setInterval(() => updateAndRender(false), 1000); // Smart updates every second
+    setInterval(() => updateAndRender(false), 1000);
     setInterval(fetchData, 30 * 1000);
 
     function joinById() {
@@ -135,13 +137,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Gets data from database and removes duplicates - keeps the newest one if server appears twice
     async function fetchData() {
         try {
             const { data, error } = await sb.from('servers').select('*').eq('status', 'active').eq('cycles_since_seen', 0);
             if (error) throw error;
 
-            // Remove duplicates by keeping the most recent one per server_id
             const serverMap = new Map();
             for (const server of data) {
                 if (!serverMap.has(server.server_id) || new Date(server.first_seen) > new Date(serverMap.get(server.server_id).first_seen)) {
@@ -154,60 +154,88 @@ document.addEventListener('DOMContentLoaded', async () => {
             loadingContainer.style.display = 'none';
             serverListContainer.style.display = 'flex';
             errorContainer.style.display = 'none';
-            updateAndRender(true); // Force full re-render after fetching new data
+            updateAndRender(true);
         } catch (err) {
             console.error('Error fetching data:', err);
             showError(`Failed to fetch server data: ${err.message}.`);
         }
     }
 
-    // Figures out what phase the event is in based on how long the server has been up
+    // --- CORRECTED EVENT TIMING LOGIC ---
     function getEventStatus(server) {
-        const now = Date.now() + 1000;
+        const now = Date.now();
         const firstSeenTime = new Date(server.first_seen).getTime();
-        const serverAge = (now - firstSeenTime) / 1000;
-        let status = { rawAge: serverAge, age: serverAge };
+        const serverAge = (now - firstSeenTime) / 1000; // Total server age in seconds
 
-        // Use modulo to figure out where we are in the cycle
-        const timeWithinCycle = serverAge % CYCLE_DURATION;
+        let status = {
+            rawAge: serverAge,
+            age: serverAge
+        };
 
-        if (timeWithinCycle < WAIT_PERIOD) {
-            const timeUntilEvent = WAIT_PERIOD - timeWithinCycle;
-            status.phase = timeUntilEvent <= WARNING_PERIOD ? 'starting_soon' : 'far';
-            status.timeLabel = 'Arrives In:';
-            status.timeRemaining = timeUntilEvent;
-        } else {
-            const timeInEvent = timeWithinCycle - WAIT_PERIOD;
+        // The background timer runs continuously every 45 minutes since server creation
+        const timeInCurrentBackgroundCycle = serverAge % BACKGROUND_TIMER_CYCLE;
+        const timeUntilNextBackgroundTimer = BACKGROUND_TIMER_CYCLE - timeInCurrentBackgroundCycle;
+
+        // Check if we're currently in an active event
+        // Events start when the background timer hits 45min, and can last 15-16 minutes
+        // But the background timer keeps running during the event
+        let isInActiveEvent = false;
+        let timeUntilEventEnds = 0;
+
+        // Calculate how many complete 45-minute cycles have passed
+        const completedBackgroundCycles = Math.floor(serverAge / BACKGROUND_TIMER_CYCLE);
+
+        if (completedBackgroundCycles > 0) {
+            // At least one background timer cycle has completed, so events could be happening
+            // Check each possible event period to see if we're currently in one
+            for (let cycle = 0; cycle < completedBackgroundCycles + 1; cycle++) {
+                const eventStartTime = (cycle + 1) * BACKGROUND_TIMER_CYCLE; // Events start after each 45min cycle
+                const eventEndTime = eventStartTime + EVENT_DURATION; // Events last ~15 minutes
+
+                if (serverAge >= eventStartTime && serverAge < eventEndTime) {
+                    // We're currently in an active event
+                    isInActiveEvent = true;
+                    timeUntilEventEnds = eventEndTime - serverAge;
+                    break;
+                }
+            }
+        }
+
+        if (isInActiveEvent) {
+            // Currently in an active event
             status.phase = 'active';
             status.timeLabel = 'Leaves In:';
-            status.timeRemaining = EVENT_DURATION - timeInEvent;
+            status.timeRemaining = timeUntilEventEnds;
+        } else {
+            // Waiting for next event (next background timer to complete)
+            status.phase = timeUntilNextBackgroundTimer <= WARNING_PERIOD ? 'starting_soon' : 'far';
+            status.timeLabel = 'Arrives In:';
+            status.timeRemaining = timeUntilNextBackgroundTimer;
         }
+
+        // Debug logging to help identify timing issues
+        console.log(`Server ${server.server_id.substring(0,8)}: Age=${Math.floor(serverAge/60)}m, BackgroundTimer=${Math.floor(timeInCurrentBackgroundCycle/60)}m/${Math.floor(BACKGROUND_TIMER_CYCLE/60)}m, InEvent=${isInActiveEvent}, TimeRemaining=${Math.floor(status.timeRemaining/60)}m`);
 
         status.confidence = calculateTimingConfidence(server, status);
         return { ...server, ...status };
     }
 
-    // Tries to guess how reliable the timing is based on player count and server age
     function calculateTimingConfidence(server, status) {
         const ageMinutes = status.rawAge / 60;
         const playersPerMinute = server.player_count / Math.max(ageMinutes, 1);
 
-        // Check the obvious bad cases first
         if (server.cycles_since_seen > 0) return 'low';
         if (ageMinutes < 10 && playersPerMinute > 1) return 'medium';
         if (ageMinutes < 5 && server.player_count > 6) return 'low';
         return 'high';
     }
 
-    // Main function that filters, sorts, and decides whether to redraw everything or just update text
     function updateAndRender(forceFullRender = false) {
         if (!serverData.length) return;
 
-        // Run all servers through the event status calculator
         let processed = serverData.map(getEventStatus);
         let displayList;
 
-        // Different filtering logic depending on what view we're in
         if (filterMode === 'joined') {
             displayList = processed.filter(s => joinedServers.has(s.server_id))
                 .map(s => ({ ...s, joinedAt: joinedServers.get(s.server_id).joinedAt }));
@@ -219,7 +247,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        // Sort based on whatever mode is selected - basically a big switch statement
         displayList.sort((a, b) => {
             switch (sortMode) {
                 case 'oldest': return b.age - a.age;
@@ -235,11 +262,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         renderStats(processed);
 
-        // Only rebuild the whole thing if we have to - otherwise just update the text to avoid flicker
         if (forceFullRender || serverListContainer.children.length !== displayList.length) {
             fullRenderServers(displayList);
         } else {
-            smartUpdateServers(displayList); // Only update text content to prevent flicker
+            smartUpdateServers(displayList);
         }
     }
 
@@ -250,17 +276,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('total-servers').textContent = allServers.length;
     }
 
-    // Optimized update path - modifies existing DOM nodes instead of recreating them
-    // Prevents hover state loss during updates (like maintaining widget focus)
     function smartUpdateServers(servers) {
         servers.forEach((server, index) => {
             const card = serverListContainer.children[index];
             if (!card || card.id !== `server-${server.server_id}`) {
-                 // Order mismatch detected - fall back to full rebuild
                 fullRenderServers(servers);
                 return;
             }
-            // Update only dynamic content - similar to invalidating specific regions
             card.className = `server-card status-${server.phase} confidence-${server.confidence}`;
             card.querySelector('.server-player-count').textContent = `${server.player_count}/${MAX_PLAYERS} Players`;
             card.querySelector('.server-timer').textContent = `${server.timeLabel} ${formatTime(server.timeRemaining)}`;
@@ -268,30 +290,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Full DOM reconstruction - clears and rebuilds entire container
     function fullRenderServers(servers) {
-        serverListContainer.innerHTML = ''; // Clear everything
+        serverListContainer.innerHTML = '';
         if (servers.length === 0) {
             serverListContainer.innerHTML = `<div class="info-box" style="width:100%; text-align:center;">No servers match the current filter.</div>`;
             return;
         }
         servers.forEach(server => serverListContainer.appendChild(createServerCard(server, filterMode === 'joined')));
 
-        // Reattach event handlers after DOM reconstruction - similar to reconnecting callbacks
         document.querySelectorAll('.join-btn').forEach(btn => btn.addEventListener('click', handleJoinClick));
         document.querySelectorAll('.return-btn').forEach(btn => btn.addEventListener('click', handleReturnClick));
         document.querySelectorAll('.copy-id-icon-btn').forEach(el => el.addEventListener('click', handleCopyId));
     }
 
-    // DOM element factory - constructs server card with embedded data attributes
     function createServerCard(server, isJoined) {
         const card = document.createElement('div');
         card.className = `server-card status-${server.phase} confidence-${server.confidence}`;
         card.id = `server-${server.server_id}`;
 
         let confidenceHTML = '';
-        if (server.confidence === 'medium') confidenceHTML = `...`;
-        if (server.confidence === 'low') confidenceHTML = `...`;
+        if (server.confidence === 'medium') confidenceHTML = `<span class="info-item warning-info" title="Timing might be slightly inaccurate"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>~</span>`;
+        if (server.confidence === 'low') confidenceHTML = `<span class="info-item error-info" title="Timing may be inaccurate"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>?</span>`;
 
         const joinButtonHTML = `<button class="btn btn-success join-btn" data-server-id="${server.server_id}">Join</button>`;
         const returnButtonHTML = isJoined ? `<button class="btn btn-warning return-btn" data-server-id="${server.server_id}">Return</button>` : '';
@@ -315,7 +334,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         return card;
     }
 
-    // Event handlers with data attribute extraction - similar to signal/slot pattern
     function handleJoinClick(e) {
         const serverId = e.target.dataset.serverId;
         joinedServers.set(serverId, { joinedAt: Date.now() });
@@ -335,14 +353,46 @@ document.addEventListener('DOMContentLoaded', async () => {
         navigator.clipboard.writeText(serverId).then(() => toast(`Copied Server ID`));
     }
 
-    // Persistence layer - serializes Map to JSON for localStorage
-    function saveJoinedServers() { localStorage.setItem('joinedMerchantServers', JSON.stringify(Array.from(joinedServers.entries()))); }
-    function loadJoinedServers() { const stored = localStorage.getItem('joinedMerchantServers'); if (stored) { joinedServers = new Map(JSON.parse(stored)); } }
-    function showError(msg) { errorContainer.innerHTML = `<div class="info-box error-box">${msg}</div>`; errorContainer.style.display = 'block'; }
+    function saveJoinedServers() {
+        localStorage.setItem('joinedMerchantServers', JSON.stringify(Array.from(joinedServers.entries())));
+    }
 
-    // Time formatting utilities - bounds checking and zero-padding
-    function formatTime(s) { const totalSeconds = Math.ceil(Math.max(0, s)); const m = Math.floor(totalSeconds / 60); const sec = totalSeconds % 60; return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`; }
-    function formatAge(s) { const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return h > 0 ? `${h}h ${m}m` : `${m}m`; }
-    function initializeCustomSelects() { if (typeof window.initializeCustomSelects === 'function') { window.initializeCustomSelects(); } }
-    function toast(message) { if (typeof window.toast === 'function') { window.toast(message); } else { console.log('Toast:', message); } }
+    function loadJoinedServers() {
+        const stored = localStorage.getItem('joinedMerchantServers');
+        if (stored) {
+            joinedServers = new Map(JSON.parse(stored));
+        }
+    }
+
+    function showError(msg) {
+        errorContainer.innerHTML = `<div class="info-box error-box">${msg}</div>`;
+        errorContainer.style.display = 'block';
+    }
+
+    function formatTime(s) {
+        const totalSeconds = Math.ceil(Math.max(0, s));
+        const m = Math.floor(totalSeconds / 60);
+        const sec = totalSeconds % 60;
+        return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    }
+
+    function formatAge(s) {
+        const h = Math.floor(s/3600);
+        const m = Math.floor((s%3600)/60);
+        return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    }
+
+    function initializeCustomSelects() {
+        if (typeof window.initializeCustomSelects === 'function') {
+            window.initializeCustomSelects();
+        }
+    }
+
+    function toast(message) {
+        if (typeof window.toast === 'function') {
+            window.toast(message);
+        } else {
+            console.log('Toast:', message);
+        }
+    }
 });
