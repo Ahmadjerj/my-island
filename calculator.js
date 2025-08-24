@@ -45,15 +45,12 @@ function setupImageUpload() {
 
         if (imageNaturalSize.width === 0 || imageNaturalSize.height === 0) return;
 
-        // Calculate the scaled dimensions
         const scaledWidth = (imageNaturalSize.width / Math.max(imageNaturalSize.width / containerSize.width, imageNaturalSize.height / containerSize.height)) * imageTransform.scale;
         const scaledHeight = (imageNaturalSize.height / Math.max(imageNaturalSize.width / containerSize.width, imageNaturalSize.height / containerSize.height)) * imageTransform.scale;
 
-        // Calculate maximum translation bounds to keep image within container
         const maxTranslateX = Math.max(0, (scaledWidth - containerSize.width) / 2);
         const maxTranslateY = Math.max(0, (scaledHeight - containerSize.height) / 2);
 
-        // Constrain translations
         imageTransform.translateX = Math.max(-maxTranslateX, Math.min(maxTranslateX, imageTransform.translateX));
         imageTransform.translateY = Math.max(-maxTranslateY, Math.min(maxTranslateY, imageTransform.translateY));
     };
@@ -78,7 +75,6 @@ function setupImageUpload() {
                 dropZone.style.display = 'flex';
                 input.value = '';
 
-                // Wait for image to load to get natural dimensions
                 preview.onload = () => {
                     imageNaturalSize.width = preview.naturalWidth;
                     imageNaturalSize.height = preview.naturalHeight;
@@ -89,7 +85,6 @@ function setupImageUpload() {
         }
     };
 
-    // --- PASTE FROM CLIPBOARD ---
     const handlePaste = (e) => {
         e.preventDefault();
         const items = e.clipboardData.items;
@@ -103,10 +98,7 @@ function setupImageUpload() {
         }
     };
 
-    // Listen for paste event on the drop zone specifically
     dropZone.addEventListener('paste', handlePaste);
-
-    // Also listen on document for global paste
     document.addEventListener('paste', handlePaste);
 
     removeBtn.addEventListener('click', () => {
@@ -135,24 +127,29 @@ function setupImageUpload() {
     // --- MOUSE Events (Desktop) ---
     preview.addEventListener('wheel', e => {
         e.preventDefault();
-        const zoomSpeed = 0.001;
         const rect = preview.getBoundingClientRect();
 
-        // Get mouse position relative to image
-        const mouseX = e.clientX - rect.left - containerSize.width / 2;
-        const mouseY = e.clientY - rect.top - containerSize.height / 2;
+        // Mouse position relative to the image's top-left corner
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
 
-        const oldScale = imageTransform.scale;
-        const delta = -e.deltaY * zoomSpeed * Math.max(100, oldScale * 100);
-        imageTransform.scale = Math.max(0.3, Math.min(imageTransform.scale + delta, 3));
+        // The point on the image that the mouse is over (before zoom)
+        const imagePointX = (mouseX - imageTransform.translateX) / imageTransform.scale;
+        const imagePointY = (mouseY - imageTransform.translateY) / imageTransform.scale;
 
-        // Zoom towards mouse cursor
-        const scaleRatio = imageTransform.scale / oldScale;
-        imageTransform.translateX = mouseX - (mouseX - imageTransform.translateX) * scaleRatio;
-        imageTransform.translateY = mouseY - (mouseY - imageTransform.translateY) * scaleRatio;
+        // Use a gentle zoom factor for smooth scaling
+        const zoomFactor = 1.1;
+        const newScale = e.deltaY < 0 ? imageTransform.scale * zoomFactor : imageTransform.scale / zoomFactor;
+
+        // Clamp the scale to prevent extreme zoom levels
+        imageTransform.scale = Math.max(0.5, Math.min(newScale, 5));
+
+        // Adjust translation so the image point under the cursor stays there after zooming
+        imageTransform.translateX = mouseX - imagePointX * imageTransform.scale;
+        imageTransform.translateY = mouseY - imagePointY * imageTransform.scale;
 
         applyTransform();
-    });
+    }, { passive: false }); // Add passive: false for better scroll handling
 
     preview.addEventListener('mousedown', e => {
         e.preventDefault();
@@ -218,21 +215,17 @@ function setupImageUpload() {
             const newMidpoint = getMidpoint(e.touches);
             const rect = preview.getBoundingClientRect();
 
-            // Scale change
             const scaleChange = newDist / initialPinchDistance;
             const oldScale = imageTransform.scale;
-            imageTransform.scale = Math.max(0.3, Math.min(oldScale * scaleChange, 3));
+            imageTransform.scale = Math.max(0.5, Math.min(oldScale * scaleChange, 5));
 
-            // Calculate zoom center relative to image center
             const zoomCenterX = newMidpoint.x - rect.left - containerSize.width / 2;
             const zoomCenterY = newMidpoint.y - rect.top - containerSize.height / 2;
 
-            // Apply zoom transformation
             const scaleRatio = imageTransform.scale / oldScale;
             imageTransform.translateX = zoomCenterX - (zoomCenterX - imageTransform.translateX) * scaleRatio;
             imageTransform.translateY = zoomCenterY - (zoomCenterY - imageTransform.translateY) * scaleRatio;
 
-            // Handle panning during pinch
             const deltaX = newMidpoint.x - lastMidpoint.x;
             const deltaY = newMidpoint.y - lastMidpoint.y;
             imageTransform.translateX += deltaX;
@@ -257,7 +250,6 @@ function setupImageUpload() {
         }
     });
 
-    // Handle window resize
     window.addEventListener('resize', () => {
         if (preview.style.display !== 'none') {
             setTimeout(() => {
@@ -267,7 +259,6 @@ function setupImageUpload() {
         }
     });
 
-    // Double tap to reset zoom (mobile)
     let lastTap = 0;
     preview.addEventListener('touchend', e => {
         const currentTime = new Date().getTime();
@@ -278,7 +269,6 @@ function setupImageUpload() {
         lastTap = currentTime;
     });
 
-    // Double click to reset zoom (desktop)
     preview.addEventListener('dblclick', e => {
         e.preventDefault();
         resetTransform();
@@ -312,7 +302,7 @@ function initTileCalculator() {
     grid.innerHTML = '';
     Object.entries(MASTER_TILE_DATABASE)
         .filter(([, data]) => data.cost > 0)
-        .filter(([name]) => name !== 'Group Tile') // Exclude Group Tile
+        .filter(([name]) => name !== 'Group Tile')
         .sort(([, a], [, b]) => a.cost - b.cost)
         .forEach(([name, data]) => {
             const inputGroup = document.createElement('div');
@@ -382,7 +372,6 @@ function clearCalculator() {
 
     document.getElementById('include-tiles-toggle').checked = true;
 
-    // Remove hidden class if it exists
     const tileGrid = document.getElementById('tile-calculator-grid');
     if (tileGrid) {
         tileGrid.classList.remove('hidden');
@@ -442,7 +431,6 @@ function loadCalculatorState() {
         const includeTilesToggle = document.getElementById('include-tiles-toggle');
         includeTilesToggle.checked = state.includeTiles ?? true;
 
-        // Apply the toggle state immediately
         const tileGrid = document.getElementById('tile-calculator-grid');
         if (tileGrid) {
             if (includeTilesToggle.checked) {

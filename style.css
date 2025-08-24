@@ -42,6 +42,7 @@ body{
   backdrop-filter: blur(30px); z-index: 2000;
   display: flex; flex-direction: column; align-items: center; justify-content: space-between;
   padding: 2rem 0 1.5rem; box-shadow: var(--shadow-glow);
+  transition: all var(--transition-normal);
 }
 .side-menu-main-group { display: flex; flex-direction: column; align-items: center; gap: 1.5rem; }
 .menu-button {
@@ -119,10 +120,11 @@ body{
 .toggle-switch-group{display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;}
 .toggle-switch{position:relative;display:inline-block;width:44px;height:24px}
 .toggle-switch input{opacity:0;width:0;height:0}
-.slider{position:absolute;cursor:pointer;inset:0;background-color:rgba(0,0,0,.3);border-radius:34px;transition:.4s}
-.slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background-color:#fff;border-radius:50%;transition:.4s}
-input:checked+.slider{background-color:var(--accent-green)}
-input:checked+.slider:before{transform:translateX(20px)}
+/* Slider in toggle switch uses a different style from calculator slider */
+.toggle-switch .slider{position:absolute;cursor:pointer;inset:0;background-color:rgba(0,0,0,.3);border-radius:34px;transition:.4s}
+.toggle-switch .slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background-color:#fff;border-radius:50%;transition:.4s}
+.toggle-switch input:checked+.slider{background-color:var(--accent-green)}
+.toggle-switch input:checked+.slider:before{transform:translateX(20px)}
 
 /* --- General Stats & Loading --- */
 .loading-container{text-align:center;padding:4rem;background:var(--surface-glass);border-radius:12px;border:1px solid var(--border-glass)}
@@ -347,10 +349,8 @@ input:checked+.slider:before{transform:translateX(20px)}
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
-    /* ===== SCROLLING FIX ===== */
-    max-height: calc(100vh - 10rem); /* Adjust 10rem as needed for padding */
+    max-height: calc(100vh - 10rem);
     overflow-y: auto;
-    padding-right: 1rem; /* Space for the scrollbar */
 }
 
 /* ===== CUSTOM SCROLLBAR FOR SMOOTH SCROLLING PANEL ===== */
@@ -438,7 +438,8 @@ input:checked+.slider:before{transform:translateX(20px)}
     margin-bottom: 0;
 }
 
-.toggle-switch-group {
+/* Updated Toggle Switch styles for Calculator */
+.calculator-page .toggle-switch-group {
     display: flex;
     align-items: center;
     gap: 1rem;
@@ -447,21 +448,11 @@ input:checked+.slider:before{transform:translateX(20px)}
     border-radius: 10px;
     border: 1px solid var(--border-glass);
 }
-
-.toggle-switch {
-    position: relative;
-    display: inline-block;
+.calculator-page .toggle-switch {
     width: 52px;
     height: 28px;
 }
-
-.toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-.slider {
+.calculator-page .toggle-switch .slider {
     position: absolute;
     cursor: pointer;
     inset: 0;
@@ -470,8 +461,7 @@ input:checked+.slider:before{transform:translateX(20px)}
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     border: 2px solid rgba(255,255,255,0.1);
 }
-
-.slider:before {
+.calculator-page .toggle-switch .slider:before {
     position: absolute;
     content: "";
     height: 20px;
@@ -483,18 +473,15 @@ input:checked+.slider:before{transform:translateX(20px)}
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
-
-input:checked + .slider {
+.calculator-page .toggle-switch input:checked + .slider {
     background: linear-gradient(135deg, var(--accent-green), var(--accent-green-dark));
     border-color: var(--accent-green);
     box-shadow: 0 0 15px rgba(0,242,161,0.3);
 }
-
-input:checked + .slider:before {
+.calculator-page .toggle-switch input:checked + .slider:before {
     transform: translateX(24px);
     box-shadow: 0 2px 12px rgba(0,0,0,0.4);
 }
-
 #tile-calculator-grid.hidden {
     max-height: 0;
     opacity: 0;
@@ -503,13 +490,13 @@ input:checked + .slider:before {
     margin-top: 0;
     margin-bottom: 0;
     transform: translateY(-20px);
+    overflow: hidden;
 }
 
-/* ===== CALCULATOR LAYOUT FIX ===== */
+/* ===== CALCULATOR LAYOUT FIX & RESPONSIVENESS ===== */
 .calculator-grid {
     display: grid;
-    /* Default to 4 columns on larger screens */
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1.25rem;
     transition: all var(--transition-normal);
 }
@@ -556,6 +543,7 @@ input:checked + .slider:before {
 }
 
 .resource-input-group .form-input {
+    width: 100%; /* FIX: Prevents input from overflowing its flex container */
     margin-top: 0.5rem;
     background: rgba(0,0,0,0.4);
     border: 1px solid rgba(0,242,161,0.2);
@@ -652,5 +640,104 @@ input:checked + .slider:before {
     box-shadow: 0 8px 25px rgba(231, 76, 60, 0.4);
 }
 
-/* Mobile Responsive Enhancements */
-@media (max-wid
+/* --- Mobile Responsive Enhancements --- */
+
+/* For Tablets and smaller desktops */
+@media (max-width: 1200px) {
+    .calculator-layout {
+        /* Change to a single column layout when space is limited */
+        grid-template-columns: 1fr;
+        gap: 2rem; /* Add more gap when stacking */
+    }
+
+    .image-upload-panel {
+        /* Un-stick the image panel in the stacked layout */
+        position: static;
+        top: auto;
+    }
+
+    .inputs-panel {
+        /* Remove the fixed height and overflow when stacked, let the page scroll */
+        max-height: none;
+        overflow-y: visible;
+        padding-right: 0; /* No need for scrollbar padding */
+    }
+}
+
+/* For smaller tablets and large phones */
+@media (max-width: 768px) {
+    body {
+        /* Remove side menu padding and let content take full width */
+        padding-left: 0;
+        padding-bottom: 80px; /* Add padding at the bottom for the mobile nav */
+    }
+
+    .side-menu {
+        /* Change side menu to a bottom navigation bar */
+        flex-direction: row;
+        justify-content: space-around;
+        width: 100%;
+        height: 70px;
+        top: auto;
+        bottom: 0;
+        padding: 0 1rem;
+        border-right: none;
+        border-top: 1px solid var(--border-glass);
+    }
+
+    .side-menu-main-group {
+        flex-direction: row;
+        gap: 1rem;
+    }
+
+    #nav-home .home-logo { display: none; }
+    #nav-home .home-icon { opacity: 1; }
+
+    .bottom-icons {
+        position: static; /* Remove absolute positioning */
+    }
+
+    .calculator-grid {
+        /* Change to 2 columns for better readability on smaller screens */
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .calculator-results {
+        flex-direction: column; /* Stack results and clear button */
+        gap: 1.5rem;
+        align-items: stretch; /* Stretch items to full width */
+        text-align: center;
+    }
+
+    .calculator-results h3 {
+        text-align: center; /* Center the net worth text */
+        font-size: 1.8rem; /* Adjust font size for mobile */
+        order: -1; /* Move net worth text to the top */
+    }
+    #total-net-worth-short {
+        display: block; /* Make the short version appear on a new line */
+        margin-left: 0;
+        font-size: 1.2rem;
+    }
+}
+
+/* For small phones */
+@media (max-width: 480px) {
+    .content-container {
+        padding: 0.5rem;
+    }
+
+    .main-content {
+        padding: 1rem;
+    }
+
+    .calculator-grid {
+        /* Single column for very narrow screens */
+        grid-template-columns: 1fr;
+    }
+
+    .resource-input-group {
+        /* Adjust padding for smaller screens */
+        padding: 0.75rem;
+    }
+}
