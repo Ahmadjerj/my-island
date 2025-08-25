@@ -42,7 +42,6 @@ body{
   backdrop-filter: blur(30px); z-index: 2000;
   display: flex; flex-direction: column; align-items: center; justify-content: space-between;
   padding: 2rem 0 1.5rem; box-shadow: var(--shadow-glow);
-  transition: all var(--transition-normal);
 }
 .side-menu-main-group { display: flex; flex-direction: column; align-items: center; gap: 1.5rem; }
 .menu-button {
@@ -84,6 +83,7 @@ body{
 
 /* Unified Input Styles */
 .form-input, .form-group input[type="text"], .select-search, input[type="date"] {
+    width: 100%; /* CHANGE: Added to prevent overflow */
     padding:.7rem;
     border:1px solid var(--border-glass);
     background:rgba(0,0,0,.3);
@@ -93,7 +93,7 @@ body{
     font-family:inherit;
     transition:border-color .2s ease;
 }
-.form-input:focus, .form-group input[type="text"]:focus, .select-search:focus, input[date]:focus {
+.form-input:focus, .form-group input[type="text"]:focus, .select-search:focus, input[type="date"]:focus {
     outline:none;
     border-color:var(--accent-green);
 }
@@ -101,7 +101,6 @@ body{
     width: calc(100% - 16px);
     margin: 8px;
     padding: 8px !important; /* Override for tighter spacing in dropdown */
-    display: none; /* Hide the search box in custom dropdowns */
 }
 
 .custom-select-wrapper { position: relative; min-width: 220px; }
@@ -113,18 +112,17 @@ body{
 .select-hide { display: none; }
 .select-option{color:var(--text-light);padding:8px 12px;cursor:pointer}.select-option:hover,.same-as-selected{background-color:rgba(0,242,161,.2)}
 .chips{display:flex;flex-wrap:wrap;gap:.4rem}
-.chip{display:inline-flex;align-items:center;gap:.4rem;background:rgba(0,0,0,.2);border:1px solid var(--border-glass);padding:.35rem .6rem;border-radius:10px;font-size:.85rem;cursor:pointer;user-select:none;transition:all .2s ease;}
+.chip{display:inline-flex;align-items:center;gap:.4rem;background:rgba(0,0,0,.2);border:1px solid var(--border-glass);padding:.35rem .6rem;border-radius:8px;font-size:.85rem;cursor:pointer;user-select:none;transition:all .2s ease;} /* CHANGE: border-radius from 999px to 8px */
 .chip:hover { background: rgba(255,255,255,.1); }
 .chip.active{background:rgba(0,242,161,.18);border-color:rgba(0,242,161,.45);color:white;}
 .chip[data-filter="joined"].active { background: rgba(243, 156, 18, 0.18); border-color: rgba(243, 156, 18, 0.45); }
 .toggle-switch-group{display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;}
 .toggle-switch{position:relative;display:inline-block;width:44px;height:24px}
 .toggle-switch input{opacity:0;width:0;height:0}
-/* Slider in toggle switch uses a different style from calculator slider */
-.toggle-switch .slider{position:absolute;cursor:pointer;inset:0;background-color:rgba(0,0,0,.3);border-radius:34px;transition:.4s}
-.toggle-switch .slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background-color:#fff;border-radius:50%;transition:.4s}
-.toggle-switch input:checked+.slider{background-color:var(--accent-green)}
-.toggle-switch input:checked+.slider:before{transform:translateX(20px)}
+.slider{position:absolute;cursor:pointer;inset:0;background-color:rgba(0,0,0,.3);border-radius:34px;transition:.4s}
+.slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background-color:#fff;border-radius:50%;transition:.4s}
+input:checked+.slider{background-color:var(--accent-green)}
+input:checked+.slider:before{transform:translateX(20px)}
 
 /* --- General Stats & Loading --- */
 .loading-container{text-align:center;padding:4rem;background:var(--surface-glass);border-radius:12px;border:1px solid var(--border-glass)}
@@ -349,28 +347,7 @@ body{
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
-    max-height: calc(100vh - 10rem);
-    overflow-y: auto;
 }
-
-/* ===== CUSTOM SCROLLBAR FOR SMOOTH SCROLLING PANEL ===== */
-.inputs-panel::-webkit-scrollbar {
-  width: 8px;
-}
-.inputs-panel::-webkit-scrollbar-track {
-  background: rgba(0,0,0,0.2);
-  border-radius: 10px;
-}
-.inputs-panel::-webkit-scrollbar-thumb {
-  background-color: var(--accent-green);
-  border-radius: 10px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-.inputs-panel::-webkit-scrollbar-thumb:hover {
-  background-color: var(--accent-green-dark);
-}
-
 
 .control-panel {
     background: linear-gradient(135deg, rgba(0,0,0,0.15), rgba(18,50,35,0.1));
@@ -395,6 +372,12 @@ body{
     font-weight: 600;
     font-size: 1.2rem;
     letter-spacing: 0.5px;
+}
+
+/* Liquid Cash Full Width Enhancement */
+.liquid-cash-container {
+    width: 100%;
+    margin-bottom: 2rem;
 }
 
 .liquid-cash-container .form-group {
@@ -438,8 +421,8 @@ body{
     margin-bottom: 0;
 }
 
-/* Updated Toggle Switch styles for Calculator */
-.calculator-page .toggle-switch-group {
+/* Toggle Switch Enhancement */
+.toggle-switch-group {
     display: flex;
     align-items: center;
     gap: 1rem;
@@ -448,11 +431,21 @@ body{
     border-radius: 10px;
     border: 1px solid var(--border-glass);
 }
-.calculator-page .toggle-switch {
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
     width: 52px;
     height: 28px;
 }
-.calculator-page .toggle-switch .slider {
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
     position: absolute;
     cursor: pointer;
     inset: 0;
@@ -461,7 +454,8 @@ body{
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     border: 2px solid rgba(255,255,255,0.1);
 }
-.calculator-page .toggle-switch .slider:before {
+
+.slider:before {
     position: absolute;
     content: "";
     height: 20px;
@@ -473,15 +467,24 @@ body{
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
-.calculator-page .toggle-switch input:checked + .slider {
+
+input:checked + .slider {
     background: linear-gradient(135deg, var(--accent-green), var(--accent-green-dark));
     border-color: var(--accent-green);
     box-shadow: 0 0 15px rgba(0,242,161,0.3);
 }
-.calculator-page .toggle-switch input:checked + .slider:before {
+
+input:checked + .slider:before {
     transform: translateX(24px);
     box-shadow: 0 2px 12px rgba(0,0,0,0.4);
 }
+
+/* Hide tiles when toggle is off */
+#tile-calculator-grid {
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+}
+
 #tile-calculator-grid.hidden {
     max-height: 0;
     opacity: 0;
@@ -490,13 +493,11 @@ body{
     margin-top: 0;
     margin-bottom: 0;
     transform: translateY(-20px);
-    overflow: hidden;
 }
 
-/* ===== CALCULATOR LAYOUT FIX & RESPONSIVENESS ===== */
 .calculator-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr)); /* CHANGE: Enforce 4 columns */
     gap: 1.25rem;
     transition: all var(--transition-normal);
 }
@@ -543,7 +544,6 @@ body{
 }
 
 .resource-input-group .form-input {
-    width: 100%; /* FIX: Prevents input from overflowing its flex container */
     margin-top: 0.5rem;
     background: rgba(0,0,0,0.4);
     border: 1px solid rgba(0,242,161,0.2);
@@ -555,6 +555,7 @@ body{
     box-shadow: 0 0 12px rgba(0,242,161,0.2);
 }
 
+/* Friends Slider Enhancement */
 #friends-slider {
     width: 100%;
     margin-top: 1rem;
@@ -640,104 +641,146 @@ body{
     box-shadow: 0 8px 25px rgba(231, 76, 60, 0.4);
 }
 
-/* --- Mobile Responsive Enhancements --- */
-
-/* For Tablets and smaller desktops */
-@media (max-width: 1200px) {
+/* Mobile Responsive Enhancements */
+@media (max-width: 900px) {
     .calculator-layout {
-        /* Change to a single column layout when space is limited */
         grid-template-columns: 1fr;
-        gap: 2rem; /* Add more gap when stacking */
+        gap: 1.5rem;
     }
 
     .image-upload-panel {
-        /* Un-stick the image panel in the stacked layout */
         position: static;
-        top: auto;
+        order: -1;
     }
 
-    .inputs-panel {
-        /* Remove the fixed height and overflow when stacked, let the page scroll */
-        max-height: none;
-        overflow-y: visible;
-        padding-right: 0; /* No need for scrollbar padding */
+    .image-drop-zone {
+        padding: 3rem 1.5rem;
+        min-height: 150px;
+    }
+
+    .image-preview {
+        max-height: 300px;
     }
 }
 
-/* For smaller tablets and large phones */
 @media (max-width: 768px) {
-    body {
-        /* Remove side menu padding and let content take full width */
-        padding-left: 0;
-        padding-bottom: 80px; /* Add padding at the bottom for the mobile nav */
-    }
-
-    .side-menu {
-        /* Change side menu to a bottom navigation bar */
-        flex-direction: row;
-        justify-content: space-around;
-        width: 100%;
-        height: 70px;
-        top: auto;
-        bottom: 0;
-        padding: 0 1rem;
-        border-right: none;
-        border-top: 1px solid var(--border-glass);
-    }
-
-    .side-menu-main-group {
-        flex-direction: row;
+    .calculator-grid {
+        grid-template-columns: 1fr;
         gap: 1rem;
     }
 
-    #nav-home .home-logo { display: none; }
-    #nav-home .home-icon { opacity: 1; }
-
-    .bottom-icons {
-        position: static; /* Remove absolute positioning */
-    }
-
-    .calculator-grid {
-        /* Change to 2 columns for better readability on smaller screens */
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+    .control-panel {
+        padding: 1.25rem;
     }
 
     .calculator-results {
-        flex-direction: column; /* Stack results and clear button */
+        flex-direction: column;
         gap: 1.5rem;
-        align-items: stretch; /* Stretch items to full width */
         text-align: center;
     }
 
     .calculator-results h3 {
-        text-align: center; /* Center the net worth text */
-        font-size: 1.8rem; /* Adjust font size for mobile */
-        order: -1; /* Move net worth text to the top */
+        font-size: 1.8rem;
+        text-align: center;
     }
-    #total-net-worth-short {
-        display: block; /* Make the short version appear on a new line */
-        margin-left: 0;
-        font-size: 1.2rem;
+
+    .liquid-cash-container .form-input {
+        font-size: 1rem;
+        padding: 0.875rem 1rem;
+    }
+
+    .image-drop-zone {
+        padding: 2rem 1rem;
+        min-height: 120px;
+    }
+
+    .image-drop-zone p {
+        font-size: 1rem;
+    }
+
+    /* Better touch targets for mobile */
+    .toggle-switch {
+        width: 56px;
+        height: 32px;
+    }
+
+    .slider:before {
+        height: 24px;
+        width: 24px;
+        left: 3px;
+        bottom: 2px;
+    }
+
+    input:checked + .slider:before {
+        transform: translateX(26px);
     }
 }
 
-/* For small phones */
-@media (max-width: 480px) {
-    .content-container {
-        padding: 0.5rem;
+/* Enhanced Image Zoom Controls */
+@media (max-width: 768px) {
+    .image-preview {
+        /* Better mobile touch handling */
+        touch-action: pan-x pan-y;
     }
+}
 
-    .main-content {
-        padding: 1rem;
-    }
+/* Scroll behavior improvements */
+.image-upload-panel {
+    /* Ensure the panel doesn't interfere with scroll */
+    contain: layout style paint;
+}
 
-    .calculator-grid {
-        /* Single column for very narrow screens */
+.image-preview {
+    /* Constrain zoom to reasonable bounds */
+    max-width: 100%;
+    height: auto;
+    /* Smooth transitions for transform changes */
+    transition: transform 0.1s ease-out;
+}
+
+/* --- Stocks Specific --- */
+.controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    margin-bottom: 1.25rem;
+    align-items: start;
+}
+.chip .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.chart-card{background:rgba(0,0,0,.1);border:1px solid var(--border-glass);border-radius:12px;padding:1.25rem;flex-grow:1;width:100%}
+.chart-container{position:relative;height:400px}
+.chart-view-toggle{display:flex;justify-content:center;margin-bottom:1rem;background:rgba(0,0,0,.2);border-radius:8px;padding:4px}
+.chart-view-toggle button{flex:1;background:0 0;color:var(--text-muted);border:none;padding:.5rem;border-radius:6px;cursor:pointer;transition:all .2s ease}
+.chart-view-toggle button.active{background:var(--accent-green);color:var(--bg-dark);font-weight:700}
+
+/* --- Responsive --- */
+@media (max-width: 1024px) {
+    .controls {
         grid-template-columns: 1fr;
     }
+}
 
-    .resource-input-group {
-        /* Adjust padding for smaller screens */
-        padding: 0.75rem;
-    }
+@media (max-width: 900px){
+    .calculator-layout{grid-template-columns:1fr}
+    .image-upload-panel{position:static}
+}
+
+@media (max-width: 768px){
+  body{ padding-left:0; padding-top:70px; }
+  .side-menu{
+    width:100vw; height:70px; top:0; left:0;
+    flex-direction:row; justify-content:space-around;
+    border-right:none; border-bottom:1px solid var(--border-glass);
+    padding: 1rem 0;
+  }
+  .side-menu-main-group{ flex-direction:row; gap: 1rem; }
+  .bottom-icons{ display:none }
+  .main-content{ padding:1rem }
+  .merchant-controls { flex-direction: column; align-items: stretch; }
+  .server-card { flex-direction: column; align-items: stretch; gap: 1rem; }
 }
