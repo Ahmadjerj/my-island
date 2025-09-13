@@ -5,11 +5,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const PLACE_ID = '118648755816733';
 
     // --- TIMER LOGIC ---
-    const BACKGROUND_TIMER_CYCLE = 45 * 60; // 45 minutes - the continuous background timer
-    const EVENT_DURATION = 15 * 60; // 15 minutes - but can vary (15-16 minutes in reality)
+    const BACKGROUND_TIMER_CYCLE = 45 * 60; // 45 minutes
+    const EVENT_DURATION = 15 * 60; // 15 minutes
     const WARNING_PERIOD = 5 * 60;  // 5 minutes warning before event
     const MAX_PLAYERS = 8;
-    const JOINED_SERVER_GRACE_PERIOD = 45 * 60 * 1000; // 45 minutes in milliseconds
+    const JOINED_SERVER_GRACE_PERIOD = 45 * 60 * 1000; // 45 minutes in ms
 
     // --- STATE ---
     let serverData = [];
@@ -61,9 +61,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const newSortMode = e.target.value;
         if (!newSortMode) return;
         sortMode = newSortMode;
-        if (newSortMode !== 'join_order') {
-            previousSortMode = newSortMode;
-        }
+        if (newSortMode !== 'join_order') previousSortMode = newSortMode;
         updateAndRender(true);
     });
 
@@ -85,9 +83,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (filterMode === 'joined') {
             sortMode = 'join_order';
         } else {
-            if (sortMode === 'join_order') {
-                sortMode = previousSortMode;
-            }
+            if (sortMode === 'join_order') sortMode = previousSortMode;
         }
         rebuildSortOptions();
         updateAndRender(true);
@@ -117,9 +113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             sortSelect.appendChild(opt);
         }
         sortSelect.value = sortMode;
-        if (typeof window.initializeCustomSelects === 'function') {
-            window.initializeCustomSelects();
-        }
+        if (typeof window.initializeCustomSelects === 'function') window.initializeCustomSelects();
     }
 
     // --- MAIN EXECUTION ---
@@ -131,16 +125,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function joinById() {
         const serverId = joinByIdInput.value.trim();
-        if (serverId.length < 36) { return toast('Invalid Server ID format.'); }
-        if (safeLaunchRobloxGame(PLACE_ID, serverId)) {
-            joinByIdInput.value = '';
-        }
+        if (serverId.length < 36) return toast('Invalid Server ID format.');
+        if (safeLaunchRobloxGame(PLACE_ID, serverId)) joinByIdInput.value = '';
     }
 
+    // --- FETCH SERVERS USING CYCLES SINCE SEEN ---
     async function fetchData() {
         try {
-            const { data, error } = await sb.from('servers').select('*').eq('status', 'active').eq('cycles_since_seen', 0);
+            let { data, error } = await sb.from('servers').select('*').eq('cycles_since_seen', 0);
             if (error) throw error;
+
+            let warningMode = false;
+            if (!data || data.length === 0) {
+                warningMode = true;
+                const { data: fallbackData, error: fallbackError } = await sb.from('servers')
+                    .select('*')
+                    .in('cycles_since_seen', [1,2,3,4,5]);
+                if (fallbackError) throw fallbackError;
+                data = fallbackData || [];
+            }
 
             const serverMap = new Map();
             for (const server of data) {
@@ -150,7 +153,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             const cleanedData = Array.from(serverMap.values());
-            serverData = cleanedData.filter(s => s.player_count <= MAX_PLAYERS && s.player_count >= 0);
+            serverData = cleanedData.map(s => ({ ...s, showWarning: warningMode }));
+
             loadingContainer.style.display = 'none';
             serverListContainer.style.display = 'flex';
             errorContainer.style.display = 'none';
@@ -161,39 +165,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // --- CORRECTED EVENT TIMING LOGIC ---
+    // --- EVENT TIMING LOGIC ---
     function getEventStatus(server) {
         const now = Date.now();
         const firstSeenTime = new Date(server.first_seen).getTime();
-        const serverAge = (now - firstSeenTime) / 1000; // Total server age in seconds
+        const serverAge = (now - firstSeenTime) / 1000;
 
-        let status = {
-            rawAge: serverAge,
-            age: serverAge
-        };
-
-        // The background timer runs continuously every 45 minutes since server creation
+        let status = { rawAge: serverAge, age: serverAge };
         const timeInCurrentBackgroundCycle = serverAge % BACKGROUND_TIMER_CYCLE;
         const timeUntilNextBackgroundTimer = BACKGROUND_TIMER_CYCLE - timeInCurrentBackgroundCycle;
 
-        // Check if we're currently in an active event
-        // Events start when the background timer hits 45min, and can last 15-16 minutes
-        // But the background timer keeps running during the event
         let isInActiveEvent = false;
         let timeUntilEventEnds = 0;
-
-        // Calculate how many complete 45-minute cycles have passed
         const completedBackgroundCycles = Math.floor(serverAge / BACKGROUND_TIMER_CYCLE);
 
         if (completedBackgroundCycles > 0) {
-            // At least one background timer cycle has completed, so events could be happening
-            // Check each possible event period to see if we're currently in one
             for (let cycle = 0; cycle < completedBackgroundCycles + 1; cycle++) {
-                const eventStartTime = (cycle + 1) * BACKGROUND_TIMER_CYCLE; // Events start after each 45min cycle
-                const eventEndTime = eventStartTime + EVENT_DURATION; // Events last ~15 minutes
-
+                const eventStartTime = (cycle + 1) * BACKGROUND_TIMER_CYCLE;
+                const eventEndTime = eventStartTime + EVENT_DURATION;
                 if (serverAge >= eventStartTime && serverAge < eventEndTime) {
-                    // We're currently in an active event
                     isInActiveEvent = true;
                     timeUntilEventEnds = eventEndTime - serverAge;
                     break;
@@ -202,19 +192,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (isInActiveEvent) {
-            // Currently in an active event
             status.phase = 'active';
             status.timeLabel = 'Leaves In:';
             status.timeRemaining = timeUntilEventEnds;
         } else {
-            // Waiting for next event (next background timer to complete)
             status.phase = timeUntilNextBackgroundTimer <= WARNING_PERIOD ? 'starting_soon' : 'far';
             status.timeLabel = 'Arrives In:';
             status.timeRemaining = timeUntilNextBackgroundTimer;
         }
-
-        // Debug logging to help identify timing issues
-        console.log(`Server ${server.server_id.substring(0,8)}: Age=${Math.floor(serverAge/60)}m, BackgroundTimer=${Math.floor(timeInCurrentBackgroundCycle/60)}m/${Math.floor(BACKGROUND_TIMER_CYCLE/60)}m, InEvent=${isInActiveEvent}, TimeRemaining=${Math.floor(status.timeRemaining/60)}m`);
 
         status.confidence = calculateTimingConfidence(server, status);
         return { ...server, ...status };
@@ -230,6 +215,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return 'high';
     }
 
+    // --- UPDATE AND RENDER ---
     function updateAndRender(forceFullRender = false) {
         if (!serverData.length) return;
 
@@ -242,9 +228,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             let filteredByFull = showFullServers ? processed : processed.filter(s => s.player_count < MAX_PLAYERS);
             displayList = filteredByFull.filter(s => !joinedServers.has(s.server_id));
-            if (filterMode !== 'all') {
-                displayList = displayList.filter(s => s.phase === filterMode);
-            }
+            if (filterMode !== 'all') displayList = displayList.filter(s => s.phase === filterMode);
         }
 
         displayList.sort((a, b) => {
@@ -261,12 +245,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         renderStats(processed);
-
-        if (forceFullRender || serverListContainer.children.length !== displayList.length) {
-            fullRenderServers(displayList);
-        } else {
-            smartUpdateServers(displayList);
-        }
+        if (forceFullRender || serverListContainer.children.length !== displayList.length) fullRenderServers(displayList);
+        else smartUpdateServers(displayList);
     }
 
     function renderStats(allServers) {
@@ -309,8 +289,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         card.id = `server-${server.server_id}`;
 
         let confidenceHTML = '';
-        if (server.confidence === 'medium') confidenceHTML = `<span class="info-item warning-info" title="Timing might be slightly inaccurate"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>~</span>`;
+        if (server.confidence === 'medium') confidenceHTML = `<span class="info-item warning-info" title="Timing might be slightly inaccurate"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></span>`;
         if (server.confidence === 'low') confidenceHTML = `<span class="info-item error-info" title="Timing may be inaccurate"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>?</span>`;
+
+        let warningHTML = '';
+        if (server.showWarning && server.confidence !== 'low') warningHTML = `<span class="info-item warning-info" title="Server may be off or outdated"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></span>`;
 
         const joinButtonHTML = `<button class="btn btn-success join-btn" data-server-id="${server.server_id}">Join</button>`;
         const returnButtonHTML = isJoined ? `<button class="btn btn-warning return-btn" data-server-id="${server.server_id}">Return</button>` : '';
@@ -322,7 +305,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="server-info">
                     <span class="info-item server-player-count">${server.player_count}/${MAX_PLAYERS} Players</span>
                     <span class="info-item server-timer">${server.timeLabel} ${formatTime(server.timeRemaining)}</span>
-                    ${confidenceHTML}
+                    ${confidenceHTML}${warningHTML}
                 </div>
                 <div class="server-meta-info">
                     <span class="server-age">Age: ${formatAge(server.rawAge)}</span>
@@ -359,9 +342,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function loadJoinedServers() {
         const stored = localStorage.getItem('joinedMerchantServers');
-        if (stored) {
-            joinedServers = new Map(JSON.parse(stored));
-        }
+        if (stored) joinedServers = new Map(JSON.parse(stored));
     }
 
     function showError(msg) {
@@ -383,16 +364,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function initializeCustomSelects() {
-        if (typeof window.initializeCustomSelects === 'function') {
-            window.initializeCustomSelects();
-        }
+        if (typeof window.initializeCustomSelects === 'function') window.initializeCustomSelects();
     }
 
     function toast(message) {
-        if (typeof window.toast === 'function') {
-            window.toast(message);
-        } else {
-            console.log('Toast:', message);
-        }
+        if (typeof window.toast === 'function') window.toast(message);
+        else console.log('Toast:', message);
     }
 });
