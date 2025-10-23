@@ -2,48 +2,39 @@ let stockData = [];
 let mainChart, distChart;
 let activeFilters = new Set();
 let filterMode = 'include';
-let dateRange = { start: null, end: null };
+let excludeUncategorized = false;
+let uncategorizedItems = new Set();
+let dateRange = {
+    start: null
+    , end: null
+};
 let tileVariantToBaseMap = {};
 
-//So you can see them in rarity and not in alphabitcal order
 const CUSTOM_RARITY_ORDER = [
-    "Trees",
-    "Flowers",
-    "Rocks",
-    "Farmland",
-    "Sand Pile",
-    "Farm",
-    "Sawmill",
-    "Grasslands",
-    "Crystal",
-    "Beach",
-    "Apple Tree",
-    "Glowing Mushroom",
-    "Basalt",
-    "Acid Rock",
-    "Ice",
-    "Citrus Tree",
-    "Magma",
-    "Moai",
-    "Disco",
-    "Radioactive"
+    "Trees", "Flowers", "Rocks", "Farmland", "Grasslands", "Sand Pile", "Farm", "Sawmill"
+    , "Crystal", "Mesa", "Apple Tree", "Glowing Mushroom", "Beach", "Treehouse", "Basalt"
+    , "Acid Rock", "Citrus Tree", "Ice", "Magma", "Moai", "Disco", "Radioactive", "Obsidian"
 ];
 
-// Helper function to format date for input fields
-function formatDateForInput(date) {
-    const d = new Date(date);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-}
+document.addEventListener('DOMContentLoaded', async () => {
+    precomputeTileVariantMap();
+    try {
+        const response = await fetch('output.json');
+        if (!response.ok) throw new Error(`Failed to fetch output.json: ${response.statusText}`);
+        const rawData = await response.json();
+        stockData = parseStockData(rawData);
+        if (!stockData.length) throw new Error("No valid stock messages found in data.");
+        initializeApp();
+    } catch (error) {
+        console.error("Failed to load or parse stock data:", error);
+        showError(error.message);
+    }
+});
 
-// UPDATED: Pre-computes a map from a specific tile variant name to its base tile NAME (string).
 function precomputeTileVariantMap() {
     tileVariantToBaseMap = {};
     for (const baseName in MASTER_TILE_DATABASE) {
         const baseData = MASTER_TILE_DATABASE[baseName];
-        // Also map the base name itself, in case it appears in stock data
         tileVariantToBaseMap[baseName] = baseName;
         if (baseData.variants) {
             for (const variant of baseData.variants) {
@@ -53,127 +44,93 @@ function precomputeTileVariantMap() {
     }
 }
 
-
-document.addEventListener('DOMContentLoaded', async () => {
-    precomputeTileVariantMap(); // Pre-process rarity data
-    try {
-        const response = await fetch('output.json');
-
-        if (!response.ok) {
-            throw new Error(`Failed to fetch output.json. Server responded with status: ${response.status} ${response.statusText}`);
-        }
-
-        const rawData = await response.json();
-        console.log("Successfully fetched and parsed output.json. Raw data:", rawData);
-
-        stockData = parseStockData(rawData);
-        console.log(`Found and parsed ${stockData.length} valid stock messages.`);
-
-        if (!stockData || stockData.length === 0) {
-            throw new Error("Found 'output.json', but it contains no valid stock messages. Please check the file content and format.");
-        }
-
-        initializeApp();
-    } catch (error) {
-        console.error("Failed to load or parse stock data:", error);
-        showError(error.message);
+function stringToColor(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
     }
-});
+    const hue = hash % 360;
+    return `hsl(${hue}, 70%, 50%)`;
+}
 
-// UPDATED: This function now works with the modified tileVariantToBaseMap
 function getTileColor(tileName) {
-    const baseName = tileVariantToBaseMap[tileName];
-    if (baseName && MASTER_TILE_DATABASE[baseName]) {
-        return MASTER_TILE_DATABASE[baseName].color;
+    const baseName = tileVariantToBaseMap[tileName] || tileName;
+    const colorKey = baseName.toLowerCase()
+        .replace(/ /g, ' ');
+    if (TILE_COLORS[colorKey]) {
+        return TILE_COLORS[colorKey];
     }
-    // Fallback for names not found in the map (should be rare)
-    if (MASTER_TILE_DATABASE[tileName]) {
-        return MASTER_TILE_DATABASE[tileName].color;
-    }
-    return TILE_COLORS.default;
+    const dbEntry = MASTER_TILE_DATABASE[baseName];
+    return dbEntry ? dbEntry.color : null;
 }
 
 function parseStockData(rawData) {
     if (!rawData || !Array.isArray(rawData.messages)) return [];
-
-    const stockMessages = rawData.messages.flatMap(msg => {
-        const timestamp = new Date(msg.timestamp);
-
-        let authorName = '';
-        if (msg.author) {
-            if (typeof msg.author === 'string') {
-                authorName = msg.author;
-            } else if (typeof msg.author === 'object' && msg.author.name) {
-                authorName = msg.author.name;
-            }
-        }
-
-        if (authorName === 'My Island Stock' && msg.embeds && msg.embeds.length > 0 && msg.embeds[0].title === 'My Island Stock' && Array.isArray(msg.embeds[0].fields)) {
-            const embed = msg.embeds[0];
-            const fields = embed.fields.map(field => {
-                const name = field.name.replace(/\s*\<a?:.+?:\d+>/g, '').trim();
-                const quantityMatch = field.value.match(/Quantity: \*\*(\d+)\*\*/);
-                const quantity = quantityMatch ? parseInt(quantityMatch[1], 10) : 0;
-                return { name, quantity };
-            }).filter(f => f.quantity > 0);
-
-            if (fields.length > 0) {
-                return [{ timestamp, fields }];
-            }
-        }
-
-        if (authorName === 'My Island Stock' && msg.content && msg.content.startsWith('## Tiles Stock')) {
-            const lines = msg.content.split('\n');
-            const fields = [];
-            const regex = /^x(\d+)\s@(.+)/;
-
-            for (const line of lines) {
-                const match = line.match(regex);
-                if (match) {
-                    const quantity = parseInt(match[1], 10);
-                    const name = match[2].trim();
-                    if (quantity > 0 && name) {
-                        fields.push({ name, quantity });
-                    }
+    return rawData.messages.flatMap(msg => {
+            const timestamp = new Date(msg.timestamp);
+            let authorName = msg.author?.name || (typeof msg.author === 'string' ? msg.author : '');
+            if (authorName !== 'My Island Stock') return [];
+            let fields = [];
+            if (msg.embeds?.[0]?.title === 'My Island Stock' && Array.isArray(msg.embeds[0].fields)) {
+                fields = msg.embeds[0].fields.map(field => {
+                        const name = field.name.replace(/\s*\<a?:.+?:\d+>/g, '')
+                            .trim();
+                        const quantity = parseInt(field.value.match(/Quantity: \*\*(\d+)\*\*/)
+                            ?.[1] || 0, 10);
+                        return {
+                            name
+                            , quantity
+                        };
+                    })
+                    .filter(f => f.quantity > 0);
+            } else if (msg.content?.startsWith('## Tiles Stock')) {
+                const regex = /^x(\d+)\s@(.+)/gm;
+                let match;
+                while ((match = regex.exec(msg.content)) !== null) {
+                    fields.push({
+                        name: match[2].trim()
+                        , quantity: parseInt(match[1], 10)
+                    });
                 }
             }
-
-            if (fields.length > 0) {
-                return [{ timestamp, fields }];
-            }
-        }
-
-        return [];
-    });
-
-    return stockMessages.sort((a, b) => a.timestamp - b.timestamp);
+            return fields.length > 0 ? [{
+                timestamp
+                , fields
+            }] : [];
+        })
+        .sort((a, b) => a.timestamp - b.timestamp);
 }
 
-
 function initializeApp() {
-    document.getElementById('stocks-loading-container').style.display = 'none';
-    document.getElementById('analytics-content').style.display = 'block';
-
+    document.getElementById('stocks-loading-container')
+        .style.display = 'none';
+    document.getElementById('analytics-content')
+        .style.display = 'block';
     setupControls();
     updateCharts();
 }
 
 function setupControls() {
-    document.getElementById('view-rarity').onclick = () => switchChartView('rarity');
-    document.getElementById('view-timeline').onclick = () => switchChartView('timeline');
-    document.getElementById('view-totals').onclick = () => switchChartView('totals');
-
-    document.getElementById('dist-chart-type').onchange = () => {
-        if (distChart) {
-            distChart.destroy();
-            distChart = createDistributionChart(distChart.config.data, document.getElementById('dist-chart-type').value);
-        }
-    };
+    document.getElementById('view-rarity')
+        .onclick = () => switchChartView('rarity');
+    document.getElementById('view-timeline')
+        .onclick = () => switchChartView('timeline');
+    document.getElementById('view-totals')
+        .onclick = () => switchChartView('totals');
+    document.getElementById('dist-chart-type')
+        .onchange = updateCharts;
 
     const filterToggle = document.getElementById('filter-mode-toggle');
     filterToggle.onchange = () => {
         filterMode = filterToggle.checked ? 'exclude' : 'include';
-        document.getElementById('filter-mode-label').textContent = filterToggle.checked ? 'Exclude' : 'Include';
+        document.getElementById('filter-mode-label')
+            .textContent = filterToggle.checked ? 'Exclude' : 'Include';
+        updateCharts();
+    };
+
+    const uncategorizedToggle = document.getElementById('exclude-uncategorized-toggle');
+    uncategorizedToggle.onchange = () => {
+        excludeUncategorized = uncategorizedToggle.checked;
         updateCharts();
     };
 
@@ -181,287 +138,256 @@ function setupControls() {
     const dateRangePopout = document.getElementById('date-range-popout');
     const startDateInput = document.getElementById('start-date');
     const endDateInput = document.getElementById('end-date');
-    const clearDatesBtn = document.getElementById('clear-dates-btn');
-
-    if (stockData.length > 0) {
-        const minDate = stockData[0].timestamp;
-        const maxDate = stockData[stockData.length - 1].timestamp;
-        const minDateStr = formatDateForInput(minDate);
-        const maxDateStr = formatDateForInput(maxDate);
-
-        startDateInput.min = minDateStr;
-        startDateInput.max = maxDateStr;
-        endDateInput.min = minDateStr;
-        endDateInput.max = maxDateStr;
-    }
-
     dateRangeBtn.onclick = (e) => {
         e.stopPropagation();
-        dateRangePopout.style.display = dateRangePopout.style.display === 'none' ? 'block' : 'none';
+        dateRangePopout.style.display = 'block';
     };
     document.addEventListener('click', (e) => {
-        if (!dateRangePopout.contains(e.target) && e.target !== dateRangeBtn) {
-            dateRangePopout.style.display = 'none';
-        }
+        if (!dateRangePopout.contains(e.target) && e.target !== dateRangeBtn) dateRangePopout.style.display = 'none';
     });
-
     const applyDateRange = () => {
         dateRange.start = startDateInput.value ? new Date(startDateInput.value) : null;
         dateRange.end = endDateInput.value ? new Date(endDateInput.value) : null;
         if (dateRange.start) dateRange.start.setHours(0, 0, 0, 0);
         if (dateRange.end) dateRange.end.setHours(23, 59, 59, 999);
-
-        if (dateRange.start && dateRange.end) {
-            dateRangeBtn.textContent = `${dateRange.start.toLocaleDateString()} - ${dateRange.end.toLocaleDateString()}`;
-        } else if (dateRange.start) {
-            dateRangeBtn.textContent = `From ${dateRange.start.toLocaleDateString()}`;
-        } else if (dateRange.end) {
-            dateRangeBtn.textContent = `Until ${dateRange.end.toLocaleDateString()}`;
-        } else {
-            dateRangeBtn.textContent = 'All Time';
-        }
-
+        dateRangeBtn.textContent = (dateRange.start || dateRange.end) ? `${dateRange.start?.toLocaleDateString() || '...'} - ${dateRange.end?.toLocaleDateString() || '...'}` : 'All Time';
         updateCharts();
         dateRangePopout.style.display = 'none';
     };
+    startDateInput.onchange = endDateInput.onchange = applyDateRange;
+    document.getElementById('clear-dates-btn')
+        .onclick = () => {
+            startDateInput.value = '';
+            endDateInput.value = '';
+            applyDateRange();
+        };
 
-    startDateInput.onchange = applyDateRange;
-    endDateInput.onchange = applyDateRange;
+    document.getElementById('json-file-input')
+        .addEventListener('change', handleFileUpload);
 
-    clearDatesBtn.onclick = () => {
-        startDateInput.value = '';
-        endDateInput.value = '';
-        applyDateRange();
+    const exportSelect = document.getElementById('export-options');
+    exportSelect.onchange = () => {
+        const selectedValue = exportSelect.value;
+        if (selectedValue === 'summary') exportSummaryCSV();
+        if (selectedValue === 'timeline') exportTimelineCSV();
+        exportSelect.value = 'none';
+        updateCustomSelectDisplay(exportSelect);
     };
 
-    document.getElementById('json-file-input').addEventListener('change', handleFileUpload);
+    initializeCustomSelects();
 }
 
 function switchChartView(view) {
-    document.querySelectorAll('.chart-view-toggle button').forEach(b => b.classList.remove('active'));
-    document.getElementById(`view-${view}`).classList.add('active');
-
-    const mainCard = document.getElementById('main-chart-card');
-    const distCard = document.getElementById('dist-chart-card');
-    const statsGrid = document.getElementById('stats-grid');
-
-    mainCard.style.display = 'block';
-    distCard.style.display = 'block';
-    statsGrid.style.display = 'grid';
-
-    if (view === 'totals') {
-        distCard.style.display = 'none';
-        statsGrid.style.display = 'none';
-    }
-
+    document.querySelectorAll('.chart-view-toggle button')
+        .forEach(b => b.classList.remove('active'));
+    document.getElementById(`view-${view}`)
+        .classList.add('active');
+    document.getElementById('dist-chart-card')
+        .style.display = (view === 'totals') ? 'none' : 'block';
+    document.getElementById('stats-grid')
+        .style.display = (view === 'totals') ? 'none' : 'grid';
     updateCharts();
 }
 
 function getFilteredData() {
-    let data = stockData.slice();
+    let data = stockData.filter(d => (!dateRange.start || d.timestamp >= dateRange.start) && (!dateRange.end || d.timestamp <= dateRange.end));
 
-    if (dateRange.start) data = data.filter(d => d.timestamp >= dateRange.start);
-    if (dateRange.end) data = data.filter(d => d.timestamp <= dateRange.end);
-    data = JSON.parse(JSON.stringify(data));
-
-    if (activeFilters.size > 0) {
-        data.forEach(entry => {
-            entry.fields = entry.fields.filter(field => {
-                const hasFilter = activeFilters.has(field.name);
-                return filterMode === 'include' ? hasFilter : !hasFilter;
-            });
-        });
+    if (excludeUncategorized) {
+        data = JSON.parse(JSON.stringify(data))
+            .map(entry => {
+                entry.fields = entry.fields.filter(field => !uncategorizedItems.has(tileVariantToBaseMap[field.name] || field.name));
+                return entry;
+            })
+            .filter(entry => entry.fields.length > 0);
     }
 
+    if (activeFilters.size > 0) {
+        return JSON.parse(JSON.stringify(data))
+            .map(entry => {
+                entry.fields = entry.fields.filter(field => {
+                    const baseName = tileVariantToBaseMap[field.name] || field.name;
+                    const hasFilter = activeFilters.has(baseName);
+                    return filterMode === 'include' ? hasFilter : !hasFilter;
+                });
+                return entry;
+            })
+            .filter(entry => entry.fields.length > 0);
+    }
     return data;
 }
 
 function updateCharts() {
+    populateTileChips(); // Populate first to define uncategorizedItems
     const data = getFilteredData();
-    const currentView = document.querySelector('.chart-view-toggle button.active').id.replace('view-', '');
-
-    populateTileChips();
+    const currentView = document.querySelector('.chart-view-toggle button.active')
+        .id.replace('view-', '');
     const totals = aggregateTotals(data);
-    displayStats(totals);
-
+    displayStats(totals, data); // Pass full data for advanced stats
     if (mainChart) mainChart.destroy();
     if (distChart) distChart.destroy();
-
+    const chartTitle = document.getElementById('main-chart-card')
+        .querySelector('h3');
     if (currentView === 'rarity') {
-        document.getElementById('main-chart-card').querySelector('h3').textContent = 'Tile Spawn Rarity';
+        chartTitle.textContent = 'Tile Spawn Rarity';
         mainChart = createRarityChart(totals);
-    } else if (currentView === 'timeline') {
-        document.getElementById('main-chart-card').querySelector('h3').textContent = 'Quantity Over Time';
+    }
+    if (currentView === 'timeline') {
+        chartTitle.textContent = 'Quantity Over Time';
         mainChart = createTimelineChart(data);
-    } else if (currentView === 'totals') {
-        document.getElementById('main-chart-card').querySelector('h3').textContent = 'Total Quantities';
+    }
+    if (currentView === 'totals') {
+        chartTitle.textContent = 'Total Quantities';
         mainChart = createTotalsBarChart(totals);
     }
-
-    distChart = createDistributionChart(totals, document.getElementById('dist-chart-type').value);
+    if (currentView !== 'totals') distChart = createDistributionChart(totals, document.getElementById('dist-chart-type')
+        .value);
 }
 
 function populateTileChips() {
     const container = document.getElementById('tile-chip-container');
-    const allTileNames = new Set(stockData.flatMap(d => d.fields.map(f => f.name)));
-
-    // UPDATED: Sort tile names based on the custom order.
-    const sortedNames = Array.from(allTileNames).sort((a, b) => {
-        const baseNameA = tileVariantToBaseMap[a];
-        const baseNameB = tileVariantToBaseMap[b];
-
-        const indexA = CUSTOM_RARITY_ORDER.indexOf(baseNameA);
-        const indexB = CUSTOM_RARITY_ORDER.indexOf(baseNameB);
-
-        // Treat items not in the list as having a very high index so they go to the end
-        const sortOrderA = indexA === -1 ? Infinity : indexA;
-        const sortOrderB = indexB === -1 ? Infinity : indexB;
-
-        if (sortOrderA !== sortOrderB) {
-            return sortOrderA - sortOrderB;
-        }
-
-        // If they have the same base type (e.g., Small Tree vs Large Tree) or are both not in the list,
-        // sort them alphabetically by their specific variant name.
-        return a.localeCompare(b);
-    });
-
     container.innerHTML = '';
-    sortedNames.forEach(name => {
-        const color = getTileColor(name);
-        const chip = document.createElement('div');
-        chip.className = 'chip';
-        chip.dataset.tileName = name;
-        chip.innerHTML = `<span class="dot" style="background:${color};"></span> ${name}`;
-        chip.onclick = () => {
-            if (activeFilters.has(name)) {
-                activeFilters.delete(name);
-            } else {
-                activeFilters.add(name);
-            }
-            updateCharts();
-        };
-        if (activeFilters.has(name)) {
-            chip.classList.add('active');
-        }
-        container.appendChild(chip);
-    });
-}
+    const allBaseNamesInStock = new Set(stockData.flatMap(d => d.fields.map(f => tileVariantToBaseMap[f.name] || f.name)));
+    uncategorizedItems.clear();
 
-function aggregateTotals(data) {
-    const totals = {};
-    data.forEach(entry => {
-        entry.fields.forEach(field => {
-            totals[field.name] = (totals[field.name] || 0) + field.quantity;
-        });
-    });
-    return totals;
-}
+    const categorized = new Set();
+    const misc = [];
 
-function displayStats(totals) {
-    const grid = document.getElementById('stats-grid');
-    grid.innerHTML = '';
-    const totalItems = Object.values(totals).reduce((sum, q) => sum + q, 0);
-    const uniqueItems = Object.keys(totals).length;
-
-    const createStatCard = (label, value) => `
-        <div class="stat-card">
-            <div class="stat-value">${value.toLocaleString()}</div>
-            <div class="stat-label">${label}</div>
-        </div>`;
-
-    grid.innerHTML += createStatCard('Total Items Stocked', totalItems);
-    grid.innerHTML += createStatCard('Unique Item Types', uniqueItems);
-
-    if (uniqueItems > 0) {
-        const sorted = Object.entries(totals).sort((a,b) => b[1] - a[1]);
-        grid.innerHTML += createStatCard('Most Common', `${sorted[0][0]} (${sorted[0][1].toLocaleString()})`);
-        grid.innerHTML += createStatCard('Least Common', `${sorted[sorted.length-1][0]} (${sorted[sorted.length-1][1].toLocaleString()})`);
+    const orderedChips = CUSTOM_RARITY_ORDER.filter(name => allBaseNamesInStock.has(name))
+        .map(createChip);
+    if (orderedChips.length > 0) {
+        container.innerHTML += `<div class="chips">${orderedChips.map(c => c.outerHTML).join('')}</div>`;
+        CUSTOM_RARITY_ORDER.forEach(name => categorized.add(name));
     }
+
+    allBaseNamesInStock.forEach(name => {
+        if (categorized.has(name)) return;
+        getTileColor(name) ? misc.push(name) : uncategorizedItems.add(name);
+    });
+
+    if (misc.length > 0) {
+        container.innerHTML += `<h5 style="width: 100%; margin: 10px 0 5px; font-weight: 600; color: var(--text-muted);">Miscellaneous</h5>`;
+        const miscChips = misc.sort()
+            .map(createChip);
+        container.innerHTML += `<div class="chips">${miscChips.map(c => c.outerHTML).join('')}</div>`;
+    }
+    if (uncategorizedItems.size > 0) {
+        container.innerHTML += `<h5 style="width: 100%; margin: 10px 0 5px; font-weight: 600; color: var(--text-muted);">Uncategorized</h5>`;
+        const uncategorizedChips = Array.from(uncategorizedItems)
+            .sort()
+            .map(createChip);
+        container.innerHTML += `<div class="chips">${uncategorizedChips.map(c => c.outerHTML).join('')}</div>`;
+    }
+
+    container.querySelectorAll('.chip')
+        .forEach(chip => {
+            chip.onclick = () => {
+                const name = chip.dataset.tileName;
+                activeFilters.has(name) ? activeFilters.delete(name) : activeFilters.add(name);
+                updateCharts();
+            };
+        });
 }
 
-function createRarityChart(totals) {
-    const ctx = document.getElementById('main-chart').getContext('2d');
-    const sorted = Object.entries(totals).sort((a,b) => b[1] - a[1]);
-    const labels = sorted.map(item => item[0]);
-    const data = sorted.map(item => item[1]);
-    const backgroundColors = labels.map(name => getTileColor(name));
-
-    return new Chart(ctx, {
-        type: 'bar',
-        data: { labels, datasets: [{ label: 'Total Quantity', data, backgroundColor: backgroundColors }] },
-        options: {
-            responsive: true, maintainAspectRatio: false, indexAxis: 'y',
-            scales: { x: { ticks: { color: 'white' } }, y: { ticks: { color: 'white' } } },
-            plugins: { legend: { display: false } }
-        }
-    });
+function createChip(name) {
+    const color = getTileColor(name) || stringToColor(name);
+    const chip = document.createElement('div');
+    chip.className = `chip ${activeFilters.has(name) ? 'active' : ''}`;
+    chip.dataset.tileName = name;
+    chip.innerHTML = `<span class="dot" style="background:${color};"></span> ${name}`;
+    return chip;
 }
 
 function createTimelineChart(data) {
-    const ctx = document.getElementById('main-chart').getContext('2d');
+    const ctx = document.getElementById('main-chart')
+        .getContext('2d');
     const datasets = {};
-
+    let minDate = null
+        , maxDate = null;
+    if (activeFilters.size === 1) {
+        const singleFilter = Array.from(activeFilters)[0];
+        const relevantTimestamps = data.flatMap(entry => entry.fields.some(field => (tileVariantToBaseMap[field.name] || field.name) === singleFilter) ? [entry.timestamp] : [])
+            .map(ts => ts.getTime());
+        if (relevantTimestamps.length > 0) {
+            const firstStock = Math.min(...relevantTimestamps);
+            const lastStock = Math.max(...relevantTimestamps);
+            minDate = new Date(firstStock - 3600 * 1000 * 6);
+            maxDate = new Date(lastStock + 3600 * 1000 * 6);
+        }
+    }
     data.forEach(entry => {
         entry.fields.forEach(field => {
             if (!datasets[field.name]) {
-                const color = getTileColor(field.name);
+                const color = getTileColor(field.name) || stringToColor(field.name);
                 datasets[field.name] = {
-                    label: field.name,
-                    data: [],
-                    borderColor: color,
-                    backgroundColor: shadeColor(color, 40),
-                    tension: 0.1,
-                    hidden: activeFilters.size > 0 ? !activeFilters.has(field.name) : false
+                    label: field.name
+                    , data: []
+                    , borderColor: color
+                    , backgroundColor: shadeColor(color, 40)
+                    , tension: 0.1
+                    , hidden: activeFilters.size > 0 ? !activeFilters.has(tileVariantToBaseMap[field.name]) : false
                 };
             }
-            datasets[field.name].data.push({ x: entry.timestamp, y: field.quantity });
+            datasets[field.name].data.push({
+                x: entry.timestamp
+                , y: field.quantity
+            });
         });
     });
-
     return new Chart(ctx, {
-        type: 'line',
-        data: { datasets: Object.values(datasets) },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            scales: {
+        type: 'line'
+        , data: {
+            datasets: Object.values(datasets)
+        }
+        , options: {
+            responsive: true
+            , maintainAspectRatio: false
+            , scales: {
                 x: {
-                    type: 'time',
-                    time: {
-                        tooltipFormat: 'PPpp', // Format for tooltips on hover
-                        displayFormats: {
-                            millisecond: 'HH:mm:ss.SSS',
-                            second: 'HH:mm:ss',
-                            minute: 'HH:mm',
-                            hour: 'MMM d, HH:mm',
-                            day: 'MMM d, yyyy',
-                            week: 'MMM d, yyyy',
-                            month: 'MMM yyyy',
-                            year: 'yyyy',
+                    type: 'time'
+                    , min: minDate
+                    , max: maxDate
+                    , time: {
+                        tooltipFormat: 'PPpp'
+                        , displayFormats: {
+                            day: 'MMM d, yyyy'
+                            , hour: 'HH:mm'
                         }
-                    },
-                    ticks: { color: 'white' }
-                },
-                y: {
-                    ticks: {
-                        color: 'white',
-                        precision: 0
-                    },
-                    beginAtZero: true
+                    }
+                    , ticks: {
+                        color: 'white'
+                    }
                 }
-            },
-            plugins: {
-                legend: { labels: { color: 'white' } },
-                tooltip: { mode: 'index', intersect: false },
-                zoom: {
+                , y: {
+                    ticks: {
+                        color: 'white'
+                        , precision: 0
+                    }
+                    , beginAtZero: true
+                }
+            }
+            , plugins: {
+                legend: {
+                    labels: {
+                        color: 'white'
+                    }
+                }
+                , tooltip: {
+                    mode: 'index'
+                    , intersect: false
+                }
+                , zoom: {
                     pan: {
-                        enabled: true,
-                        mode: 'x',
-                    },
-                    zoom: {
-                        wheel: { enabled: true },
-                        pinch: { enabled: true },
-                        mode: 'x'
+                        enabled: true
+                        , mode: 'x'
+                    }
+                    , zoom: {
+                        wheel: {
+                            enabled: true
+                        }
+                        , pinch: {
+                            enabled: true
+                        }
+                        , mode: 'x'
                     }
                 }
             }
@@ -469,53 +395,217 @@ function createTimelineChart(data) {
     });
 }
 
+function aggregateTotals(data) {
+    const totals = {};
+    data.forEach(e => e.fields.forEach(f => {
+        totals[f.name] = (totals[f.name] || 0) + f.quantity;
+    }));
+    return totals;
+}
+
+function displayStats(totals, data) {
+    const grid = document.getElementById('stats-grid');
+    grid.innerHTML = '';
+    const totalItems = Object.values(totals)
+        .reduce((sum, q) => sum + q, 0);
+    const uniqueItems = Object.keys(totals)
+        .length;
+    const totalRestocks = data.length;
+
+    const createStatCard = (label, value) => `<div class="stat-card"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>`;
+
+    grid.innerHTML += createStatCard('Total Items Stocked', totalItems.toLocaleString());
+    grid.innerHTML += createStatCard('Unique Item Types', uniqueItems.toLocaleString());
+    grid.innerHTML += createStatCard('Total Restock Events', totalRestocks.toLocaleString());
+
+    if (totalRestocks > 0) {
+        grid.innerHTML += createStatCard('Avg. Items / Restock', (totalItems / totalRestocks)
+            .toFixed(2));
+    } else {
+        grid.innerHTML += createStatCard('Avg. Items / Restock', 'N/A');
+    }
+
+    if (uniqueItems > 0) {
+        const sorted = Object.entries(totals)
+            .sort((a, b) => b[1] - a[1]);
+        const mostCommonName = sorted[0][0];
+
+        // Calculate Avg. Qty for the most common item
+        let mostCommonTotalQty = 0;
+        let mostCommonAppearances = 0;
+        data.forEach(entry => {
+            entry.fields.forEach(field => {
+                if (field.name === mostCommonName) {
+                    mostCommonTotalQty += field.quantity;
+                    mostCommonAppearances++;
+                }
+            });
+        });
+        const avgQtyMostCommon = (mostCommonTotalQty / mostCommonAppearances)
+            .toFixed(1);
+        grid.innerHTML += createStatCard(`Avg. Qty (${mostCommonName})`, avgQtyMostCommon);
+
+        // Calculate Top Co-occurrence
+        const pairCounts = {};
+        data.forEach(entry => {
+            const itemsInRestock = [...new Set(entry.fields.map(f => tileVariantToBaseMap[f.name] || f.name))].sort();
+            if (itemsInRestock.length > 1) {
+                for (let i = 0; i < itemsInRestock.length; i++) {
+                    for (let j = i + 1; j < itemsInRestock.length; j++) {
+                        const pairKey = `${itemsInRestock[i]}|${itemsInRestock[j]}`;
+                        pairCounts[pairKey] = (pairCounts[pairKey] || 0) + 1;
+                    }
+                }
+            }
+        });
+        const sortedPairs = Object.entries(pairCounts)
+            .sort((a, b) => b[1] - a[1]);
+        if (sortedPairs.length > 0) {
+            const topPair = sortedPairs[0][0].replace('|', ' & ');
+            grid.innerHTML += createStatCard('Top Co-occurrence', topPair);
+        } else {
+            grid.innerHTML += createStatCard('Top Co-occurrence', 'N/A');
+        }
+    } else {
+        grid.innerHTML += createStatCard('Avg. Qty (Most Common)', 'N/A');
+        grid.innerHTML += createStatCard('Top Co-occurrence', 'N/A');
+    }
+}
+
+function createRarityChart(totals) {
+    const ctx = document.getElementById('main-chart')
+        .getContext('2d');
+    const sorted = Object.entries(totals)
+        .sort((a, b) => b[1] - a[1]);
+    const labels = sorted.map(item => item[0]);
+    const data = sorted.map(item => item[1]);
+    const backgroundColors = labels.map(name => getTileColor(name) || stringToColor(name));
+    return new Chart(ctx, {
+        type: 'bar'
+        , data: {
+            labels
+            , datasets: [{
+                label: 'Total Quantity'
+                , data
+                , backgroundColor: backgroundColors
+            }]
+        }
+        , options: {
+            responsive: true
+            , maintainAspectRatio: false
+            , indexAxis: 'y'
+            , scales: {
+                x: {
+                    ticks: {
+                        color: 'white'
+                    }
+                }
+                , y: {
+                    ticks: {
+                        color: 'white'
+                    }
+                }
+            }
+            , plugins: {
+                legend: {
+                    display: false
+                }
+            }
+        }
+    });
+}
 
 function createTotalsBarChart(totals) {
-     const ctx = document.getElementById('main-chart').getContext('2d');
-     return createRarityChart(totals);
+    return createRarityChart(totals);
 }
 
 function createDistributionChart(totals, type = 'doughnut') {
-    const ctx = document.getElementById('distribution-chart').getContext('2d');
-    const sorted = Object.entries(totals).sort((a,b) => b[1] - a[1]);
+    const ctx = document.getElementById('distribution-chart')
+        .getContext('2d');
+    const sorted = Object.entries(totals)
+        .sort((a, b) => b[1] - a[1]);
     const labels = sorted.map(item => item[0]);
     const data = sorted.map(item => item[1]);
-    const backgroundColors = labels.map(name => getTileColor(name));
-
+    const backgroundColors = labels.map(name => getTileColor(name) || stringToColor(name));
     return new Chart(ctx, {
-        type: type,
-        data: { labels, datasets: [{ data, backgroundColor: backgroundColors }] },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { position: 'right', labels: { color: 'white', boxWidth: 15 } } }
+        type: type
+        , data: {
+            labels
+            , datasets: [{
+                data
+                , backgroundColor: backgroundColors
+            }]
+        }
+        , options: {
+            responsive: true
+            , maintainAspectRatio: false
+            , plugins: {
+                legend: {
+                    position: 'right'
+                    , labels: {
+                        color: 'white'
+                        , boxWidth: 15
+                    }
+                }
+            }
         }
     });
 }
 
 function showError(message) {
-    document.getElementById('stocks-loading-container').style.display = 'none';
+    document.getElementById('stocks-loading-container')
+        .style.display = 'none';
     const errorEl = document.getElementById('error-message');
     errorEl.textContent = message;
     errorEl.style.display = 'block';
 }
 
-function exportStockData() {
-    const data = getFilteredData();
-    const totals = aggregateTotals(data);
-    if(Object.keys(totals).length === 0) {
-        toast('No data to export with current filters.');
-        return;
-    }
-
-    let csvContent = "data:text/csv;charset=utf-8,Tile Name,Total Quantity\n";
-    Object.entries(totals).forEach(([name, quantity]) => {
-        csvContent += `"${name}",${quantity}\n`;
+function exportSummaryCSV() {
+    const totals = aggregateTotals(getFilteredData());
+    if (Object.keys(totals)
+        .length === 0) return toast('No data to export.');
+    const headers = ['Tile Name', 'Total Quantity'];
+    const rows = Object.entries(totals)
+        .map(([name, quantity]) => [name, quantity]);
+    let csvContent = headers.join(',') + '\n';
+    rows.forEach(row => {
+        csvContent += row.map(cell => `"${String(cell).replace(/"/g, '""')}"`)
+            .join(',') + '\n';
     });
+    downloadCSV(csvContent, 'stock_summary_export.csv');
+}
 
-    const encodedUri = encodeURI(csvContent);
+function exportTimelineCSV() {
+    const data = getFilteredData();
+    if (data.length === 0) return toast('No data to export.');
+    const headers = ['timestamp', 'tile_name', 'quantity_stocked', 'restock_id', 'items_in_same_restock', 'total_items_in_restock'];
+    const rows = [];
+    data.forEach((entry, index) => {
+        const restockId = `restock_${index + 1}`;
+        const itemsInRestock = entry.fields.map(f => f.name)
+            .join('; ');
+        const totalItemsInRestock = entry.fields.reduce((sum, f) => sum + f.quantity, 0);
+        entry.fields.forEach(field => {
+            rows.push([entry.timestamp.toISOString(), field.name, field.quantity, restockId, itemsInRestock, totalItemsInRestock]);
+        });
+    });
+    let csvContent = headers.join(',') + '\n';
+    rows.forEach(row => {
+        csvContent += row.map(cell => `"${String(cell).replace(/"/g, '""')}"`)
+            .join(',') + '\n';
+    });
+    downloadCSV(csvContent, 'stock_timeline_export.csv');
+}
+
+function downloadCSV(csvContent, fileName) {
+    const blob = new Blob([csvContent], {
+        type: 'text/csv;charset=utf-8;'
+    });
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "my_island_stock_export.csv");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", fileName);
+    link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -524,15 +614,12 @@ function exportStockData() {
 function handleFileUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (e) => {
         try {
             const rawData = JSON.parse(e.target.result);
             stockData = parseStockData(rawData);
-            if (!stockData || stockData.length === 0) {
-                 throw new Error("The uploaded JSON file does not contain any valid stock messages.");
-            }
+            if (!stockData || stockData.length === 0) throw new Error("The uploaded JSON file does not contain any valid stock messages.");
             activeFilters.clear();
             initializeApp();
             toast('Custom JSON loaded successfully!');
@@ -544,4 +631,19 @@ function handleFileUpload(event) {
     reader.readAsText(file);
 }
 
-function shadeColor(hex,percent){ try{ const num=parseInt(hex.replace('#',''),16); let r=(num>>16)+percent, g=((num>>8)&0x00FF)+percent, b=(num&0x0000FF)+percent; r=Math.max(0,Math.min(255,r)); g=Math.max(0,Math.min(255,g)); b=Math.max(0,Math.min(255,b)); return '#'+(b| (g<<8) | (r<<16)).toString(16).padStart(6,'0'); }catch{ return hex; } }
+function shadeColor(hex, percent) {
+    try {
+        const num = parseInt(hex.replace('#', ''), 16);
+        let r = (num >> 16) + percent
+            , g = ((num >> 8) & 0x00FF) + percent
+            , b = (num & 0x0000FF) + percent;
+        r = Math.max(0, Math.min(255, r));
+        g = Math.max(0, Math.min(255, g));
+        b = Math.max(0, Math.min(255, b));
+        return '#' + (b | (g << 8) | (r << 16))
+            .toString(16)
+            .padStart(6, '0');
+    } catch {
+        return hex;
+    }
+}

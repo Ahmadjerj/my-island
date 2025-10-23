@@ -36,10 +36,10 @@
       <h2 class="section-title">🧭 Traveling Merchant Tracker</h2>
 
       <div id="error-container" style="display:none;"></div>
-      <div class="info-box"><p>💡 <b>Timer out of sync?</b> If you see a merchant timer and in-game timer out of sync by more than 5min send me to fix the server-id</p></div>
+      <div class="info-box"><p>💡 <b>Timer out of sync?</b> Use the "Report Sync" button to move a server to the "Excluded" list.</p></div>
 
       <div class="join-by-id-container">
-          <input type="text" id="join-by-id-input" class="form-input" placeholder="Paste a specific Server ID to join...">
+          <input type="text" id="join-by-id-input" class="form-input" placeholder="Search by Server ID or paste a full ID to join...">
           <button id="join-by-id-btn" class="btn btn-success">Join by ID</button>
       </div>
 
@@ -66,11 +66,19 @@
           <div class="control-group">
               <label>Filter:</label>
               <div class="chips" id="filter-buttons">
-                  <div class="chip active" data-filter="all">All</div>
+                  <div class="chip" data-filter="all">All</div>
                   <div class="chip" data-filter="active">Active</div>
                   <div class="chip" data-filter="starting_soon">Soon</div>
                   <div class="chip" data-filter="far">Far</div>
                   <div class="chip" data-filter="joined">Joined</div>
+                  <div class="chip" data-filter="excluded">Excluded</div>
+              </div>
+          </div>
+          <div class="control-group">
+              <label>Action:</label>
+              <div class="chips" id="join-method-buttons">
+                  <div class="chip" data-method="ropro">Join (RoPro)</div>
+                  <div class="chip" data-method="roblox_copy">Copy URL</div>
               </div>
           </div>
           <div class="control-group">

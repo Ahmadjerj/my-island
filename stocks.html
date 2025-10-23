@@ -48,7 +48,7 @@
                 <div class="toggle-switch-group"><label>Filter Mode: <span id="filter-mode-label">Include</span></label><label class="toggle-switch"><input type="checkbox" id="filter-mode-toggle"><span class="slider"></span></label></div>
                 <div class="form-group">
                     <label>Select Tiles (click chips):</label>
-                    <div class="chips" id="tile-chip-container"></div>
+                    <div id="tile-chip-container"></div>
                 </div>
             </div>
             <div class="control-panel">
@@ -61,9 +61,22 @@
                     <label for="dist-chart-type">Distribution Chart Type:</label>
                     <div class="custom-select-wrapper"><select id="dist-chart-type"><option value="doughnut">Doughnut</option><option value="pie">Pie</option><option value="bar">Bar</option></select></div>
                 </div>
+                <div class="toggle-switch-group" style="margin-bottom: 1rem;">
+                    <label>Exclude Uncategorized</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="exclude-uncategorized-toggle">
+                        <span class="slider"></span>
+                    </label>
+                </div>
                  <input type="file" id="json-file-input" style="display:none;" accept=".json">
                  <button class="btn" onclick="document.getElementById('json-file-input').click()">Load Custom JSON</button>
-                 <button class="btn btn-warning" onclick="exportStockData()">Export to CSV</button>
+                 <div class="custom-select-wrapper" style="margin-top: 0.5rem;">
+                     <select id="export-options">
+                        <option value="none" disabled selected>Export Data...</option>
+                        <option value="summary">Export Summary (CSV)</option>
+                        <option value="timeline">Export Timeline (CSV)</option>
+                     </select>
+                 </div>
             </div>
         </div>
         <div class="stats-grid" id="stats-grid"></div>

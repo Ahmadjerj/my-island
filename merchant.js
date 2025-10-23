@@ -3,21 +3,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     const SUPABASE_URL = 'https://hrsbvguvsrdrjcukbdlc.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_kNDUBTOR4sthXqbgMosTjA_aLekCeLz';
     const PLACE_ID = '118648755816733';
+    const UNIVERSE_ID = '7800099223';
 
     // --- TIMER LOGIC ---
     const BACKGROUND_TIMER_CYCLE = 45 * 60; // 45 minutes
     const EVENT_DURATION = 15 * 60; // 15 minutes
-    const WARNING_PERIOD = 5 * 60;  // 5 minutes warning before event
+    const WARNING_PERIOD = 5 * 60; // 5 minutes warning before event
     const MAX_PLAYERS = 8;
-    const JOINED_SERVER_GRACE_PERIOD = 45 * 60 * 1000; // 45 minutes in ms
 
     // --- STATE ---
     let serverData = [];
-    let sortMode = 'soonest';
-    let previousSortMode = 'soonest';
-    let filterMode = 'all';
+    let sortMode = 'furthest';
+    let previousSortMode = 'furthest';
+    let filterMode = 'active';
     let showFullServers = false;
+    let joinMethod = 'ropro';
     let joinedServers = new Map();
+    let outOfSyncServers = new Set();
+    let isSearching = false;
 
     // --- UI ELEMENTS ---
     const loadingContainer = document.getElementById('loading-container');
@@ -25,6 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const errorContainer = document.getElementById('error-container');
     const sortSelect = document.getElementById('sort-select');
     const filterButtonsContainer = document.getElementById('filter-buttons');
+    const joinMethodButtons = document.getElementById('join-method-buttons');
     const joinByIdInput = document.getElementById('join-by-id-input');
     const joinByIdBtn = document.getElementById('join-by-id-btn');
     const fullServersToggle = document.getElementById('toggle-full-servers');
@@ -32,92 +36,107 @@ document.addEventListener('DOMContentLoaded', async () => {
     const { createClient } = window.supabase;
     const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    // --- ROBLOX LAUNCH FUNCTIONS ---
-    function launchRobloxGame(placeId, gameInstanceId = null) {
-        const robloxUrl = gameInstanceId ? `roblox://placeId=${placeId}&gameInstanceId=${gameInstanceId}` : `roblox://placeId=${placeId}`;
-        const link = document.createElement('a');
-        link.href = robloxUrl;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    // --- SETTINGS PERSISTENCE ---
+    function saveSettings() {
+        const settings = { sortMode, filterMode, showFullServers, joinMethod };
+        localStorage.setItem('merchantTrackerSettings', JSON.stringify(settings));
     }
 
-    function safeLaunchRobloxGame(placeId, gameInstanceId = null, serverDisplayName = '') {
-        const displayName = serverDisplayName || (gameInstanceId ? gameInstanceId.substring(0, 8) + '...' : 'Random Server');
-        toast(`Launching Roblox... Joining ${displayName}`);
-        try {
-            launchRobloxGame(placeId, gameInstanceId);
-            setTimeout(() => { toast(`✓ Roblox should be launching.`); }, 1500);
-            return true;
-        } catch (error) {
-            console.error('Failed to launch Roblox:', error);
-            toast(`❌ Failed to launch Roblox.`);
-            return false;
+    function loadSettings() {
+        const savedSettings = localStorage.getItem('merchantTrackerSettings');
+        if (savedSettings) {
+            const settings = JSON.parse(savedSettings);
+            sortMode = settings.sortMode || 'furthest';
+            filterMode = settings.filterMode || 'active';
+            showFullServers = settings.showFullServers || false;
+            joinMethod = settings.joinMethod || 'ropro';
         }
+        previousSortMode = sortMode;
+
+        // Update UI to reflect loaded settings
+        filterButtonsContainer.querySelector(`.chip[data-filter="${filterMode}"]`)?.classList.add('active');
+        joinMethodButtons.querySelector(`.chip[data-method="${joinMethod}"]`)?.classList.add('active');
+        fullServersToggle.checked = showFullServers;
+        sortSelect.value = sortMode;
     }
 
     // --- EVENT LISTENERS ---
     sortSelect?.addEventListener('change', (e) => {
-        const newSortMode = e.target.value;
-        if (!newSortMode) return;
-        sortMode = newSortMode;
-        if (newSortMode !== 'join_order') previousSortMode = newSortMode;
+        sortMode = e.target.value;
+        if (sortMode !== 'join_order') previousSortMode = sortMode;
+        saveSettings();
         updateAndRender(true);
     });
 
     joinByIdBtn?.addEventListener('click', joinById);
     joinByIdInput?.addEventListener('keypress', (e) => { if (e.key === 'Enter') joinById(); });
+    joinByIdInput?.addEventListener('input', debounce(() => {
+        const searchTerm = joinByIdInput.value.trim();
+        isSearching = searchTerm.length > 0;
+        handleSearch(searchTerm);
+        if (!isSearching) updateAndRender(true);
+    }, 200));
+
     fullServersToggle?.addEventListener('change', (e) => {
         showFullServers = e.target.checked;
+        saveSettings();
         updateAndRender(true);
     });
 
     filterButtonsContainer?.addEventListener('click', (e) => {
         const button = e.target.closest('.chip');
         if (!button) return;
-        const newFilterMode = button.dataset.filter;
-        if (filterMode === newFilterMode) return;
-        filterMode = newFilterMode;
+        filterMode = button.dataset.filter;
         filterButtonsContainer.querySelectorAll('.chip').forEach(btn => btn.classList.remove('active'));
         button.classList.add('active');
-        if (filterMode === 'joined') {
-            sortMode = 'join_order';
-        } else {
-            if (sortMode === 'join_order') sortMode = previousSortMode;
-        }
+        if (['joined', 'excluded'].includes(filterMode)) sortMode = 'join_order';
+        else if (sortMode === 'join_order') sortMode = previousSortMode;
+        saveSettings();
         rebuildSortOptions();
         updateAndRender(true);
     });
 
+    joinMethodButtons?.addEventListener('click', (e) => {
+        const button = e.target.closest('.chip');
+        if (!button) return;
+        joinMethod = button.dataset.method;
+        joinMethodButtons.querySelectorAll('.chip').forEach(btn => btn.classList.remove('active'));
+        button.classList.add('active');
+        saveSettings();
+        updateAndRender(true);
+    });
+
+    // --- ROPRO API HANDLER ---
+    function joinWithRoProAPI(serverId) {
+        const apiUrl = `https://api.ropro.io/createInvite.php?universeid=${UNIVERSE_ID}&serverid=${serverId}`;
+        window.open(apiUrl, '_blank');
+        toast('Opening RoPro page...');
+    }
+
     // --- DROPDOWN REBUILDER ---
     function rebuildSortOptions() {
-        const baseOptions = {
-            'soonest': 'Soonest Event',
-            'furthest': 'Furthest Event',
-            'player_high': 'Players (High to Low)',
-            'player_low': 'Players (Low to High)',
-            'oldest': 'Server Age (Oldest)',
-            'newest': 'Server Age (Newest)'
-        };
+        const baseOptions = { 'soonest': 'Soonest Event', 'furthest': 'Furthest Event', 'player_high': 'Players (High to Low)', 'player_low': 'Players (Low to High)', 'oldest': 'Server Age (Oldest)', 'newest': 'Server Age (Newest)' };
         sortSelect.innerHTML = '';
-        if (filterMode === 'joined') {
+        if (['joined', 'excluded'].includes(filterMode)) {
             const opt = document.createElement('option');
             opt.value = 'join_order';
-            opt.textContent = 'Join Order';
+            opt.textContent = (filterMode === 'joined') ? 'Join Order' : 'Report Order';
             sortSelect.appendChild(opt);
         }
-        for (const [value, text] of Object.entries(baseOptions)) {
+        Object.entries(baseOptions).forEach(([value, text]) => {
             const opt = document.createElement('option');
             opt.value = value;
             opt.textContent = text;
             sortSelect.appendChild(opt);
-        }
+        });
         sortSelect.value = sortMode;
         if (typeof window.initializeCustomSelects === 'function') window.initializeCustomSelects();
     }
 
     // --- MAIN EXECUTION ---
+    loadSettings();
     loadJoinedServers();
+    loadOutOfSyncServers();
     await fetchData();
     rebuildSortOptions();
     setInterval(() => updateAndRender(false), 1000);
@@ -126,127 +145,127 @@ document.addEventListener('DOMContentLoaded', async () => {
     function joinById() {
         const serverId = joinByIdInput.value.trim();
         if (serverId.length < 36) return toast('Invalid Server ID format.');
-        if (safeLaunchRobloxGame(PLACE_ID, serverId)) joinByIdInput.value = '';
+        if (joinMethod === 'ropro') {
+            joinWithRoProAPI(serverId);
+        } else {
+            const robloxUrl = `roblox://experiences/start?placeId=${PLACE_ID}&gameInstanceId=${serverId}`;
+            navigator.clipboard.writeText(robloxUrl).then(() => toast('Copied Roblox join URL!'));
+        }
     }
 
-    // --- FETCH SERVERS USING CYCLES SINCE SEEN ---
+    function handleSearch(searchTerm) {
+        const term = searchTerm.toLowerCase();
+        serverListContainer.querySelectorAll('.server-card').forEach(card => {
+            const serverId = card.id.replace('server-', '');
+            const serverIdSpan = card.querySelector('.server-id-container span');
+            if (!serverId || !serverIdSpan) return;
+            card.classList.remove('highlighted');
+            card.style.display = 'flex';
+            serverIdSpan.innerHTML = `ID: ${serverId}`;
+            if (term && serverId.toLowerCase().indexOf(term) === -1) {
+                card.style.display = 'none';
+            } else if (term) {
+                card.classList.add('highlighted');
+                const regex = new RegExp(`(${term})`, 'gi');
+                serverIdSpan.innerHTML = `ID: ${serverId.replace(regex, `<mark>$1</mark>`)}`;
+            }
+        });
+    }
+
     async function fetchData() {
         try {
             let { data, error } = await sb.from('servers').select('*').eq('cycles_since_seen', 0);
             if (error) throw error;
-
             let warningMode = false;
             if (!data || data.length === 0) {
                 warningMode = true;
-                const { data: fallbackData, error: fallbackError } = await sb.from('servers')
-                    .select('*')
-                    .in('cycles_since_seen', [1,2,3,4,5]);
+                const { data: fallbackData, error: fallbackError } = await sb.from('servers').select('*').in('cycles_since_seen', [1,2,3,4,5]);
                 if (fallbackError) throw fallbackError;
                 data = fallbackData || [];
             }
-
             const serverMap = new Map();
-            for (const server of data) {
+            data.forEach(server => {
                 if (!serverMap.has(server.server_id) || new Date(server.first_seen) > new Date(serverMap.get(server.server_id).first_seen)) {
                     serverMap.set(server.server_id, server);
                 }
+            });
+            const currentServerIds = new Set(serverMap.keys());
+            let changed = Array.from(outOfSyncServers).some(id => !currentServerIds.has(id));
+            if (changed) {
+                outOfSyncServers = new Set(Array.from(outOfSyncServers).filter(id => currentServerIds.has(id)));
+                saveOutOfSyncServers();
             }
-
-            const cleanedData = Array.from(serverMap.values());
-            serverData = cleanedData.map(s => ({ ...s, showWarning: warningMode }));
-
+            serverData = Array.from(serverMap.values()).map(s => ({ ...s, showWarning: warningMode }));
             loadingContainer.style.display = 'none';
             serverListContainer.style.display = 'flex';
             errorContainer.style.display = 'none';
             updateAndRender(true);
-        } catch (err) {
-            console.error('Error fetching data:', err);
-            showError(`Failed to fetch server data: ${err.message}.`);
-        }
+        } catch (err) { console.error('Error fetching data:', err); showError(`Failed to fetch server data: ${err.message}.`); }
     }
 
-    // --- EVENT TIMING LOGIC ---
     function getEventStatus(server) {
         const now = Date.now();
         const firstSeenTime = new Date(server.first_seen).getTime();
-        const serverAge = (now - firstSeenTime) / 1000;
-
-        let status = { rawAge: serverAge, age: serverAge };
+        const serverAge = Math.max(0, (now - firstSeenTime) / 1000);
+        let status = { rawAge: serverAge };
         const timeInCurrentBackgroundCycle = serverAge % BACKGROUND_TIMER_CYCLE;
         const timeUntilNextBackgroundTimer = BACKGROUND_TIMER_CYCLE - timeInCurrentBackgroundCycle;
-
-        let isInActiveEvent = false;
-        let timeUntilEventEnds = 0;
         const completedBackgroundCycles = Math.floor(serverAge / BACKGROUND_TIMER_CYCLE);
 
+        status.phase = 'far';
+        status.timeLabel = 'Arrives In:';
+        status.timeRemaining = timeUntilNextBackgroundTimer;
+
+        if (timeUntilNextBackgroundTimer <= WARNING_PERIOD) status.phase = 'starting_soon';
+
         if (completedBackgroundCycles > 0) {
-            for (let cycle = 0; cycle < completedBackgroundCycles + 1; cycle++) {
-                const eventStartTime = (cycle + 1) * BACKGROUND_TIMER_CYCLE;
-                const eventEndTime = eventStartTime + EVENT_DURATION;
-                if (serverAge >= eventStartTime && serverAge < eventEndTime) {
-                    isInActiveEvent = true;
-                    timeUntilEventEnds = eventEndTime - serverAge;
-                    break;
-                }
+            const eventStartTime = completedBackgroundCycles * BACKGROUND_TIMER_CYCLE;
+            const eventEndTime = eventStartTime + EVENT_DURATION;
+            if (serverAge >= eventStartTime && serverAge < eventEndTime) {
+                 status.phase = 'active';
+                 status.timeLabel = 'Leaves In:';
+                 status.timeRemaining = eventEndTime - serverAge;
             }
         }
-
-        if (isInActiveEvent) {
-            status.phase = 'active';
-            status.timeLabel = 'Leaves In:';
-            status.timeRemaining = timeUntilEventEnds;
-        } else {
-            status.phase = timeUntilNextBackgroundTimer <= WARNING_PERIOD ? 'starting_soon' : 'far';
-            status.timeLabel = 'Arrives In:';
-            status.timeRemaining = timeUntilNextBackgroundTimer;
-        }
-
-        status.confidence = calculateTimingConfidence(server, status);
         return { ...server, ...status };
     }
 
-    function calculateTimingConfidence(server, status) {
-        const ageMinutes = status.rawAge / 60;
-        const playersPerMinute = server.player_count / Math.max(ageMinutes, 1);
-
-        if (server.cycles_since_seen > 0) return 'low';
-        if (ageMinutes < 10 && playersPerMinute > 1) return 'medium';
-        if (ageMinutes < 5 && server.player_count > 6) return 'low';
-        return 'high';
-    }
-
-    // --- UPDATE AND RENDER ---
     function updateAndRender(forceFullRender = false) {
         if (!serverData.length) return;
-
         let processed = serverData.map(getEventStatus);
         let displayList;
 
         if (filterMode === 'joined') {
-            displayList = processed.filter(s => joinedServers.has(s.server_id))
-                .map(s => ({ ...s, joinedAt: joinedServers.get(s.server_id).joinedAt }));
+            displayList = processed.filter(s => joinedServers.has(s.server_id)).map(s => ({ ...s, managedAt: joinedServers.get(s.server_id).joinedAt }));
+        } else if (filterMode === 'excluded') {
+            displayList = processed.filter(s => outOfSyncServers.has(s.server_id)).map(s => ({ ...s, managedAt: 1 }));
         } else {
-            let filteredByFull = showFullServers ? processed : processed.filter(s => s.player_count < MAX_PLAYERS);
-            displayList = filteredByFull.filter(s => !joinedServers.has(s.server_id));
-            if (filterMode !== 'all') displayList = displayList.filter(s => s.phase === filterMode);
+            let filtered = processed.filter(s => !outOfSyncServers.has(s.server_id));
+            let filteredByFull = showFullServers ? filtered : filtered.filter(s => s.player_count < MAX_PLAYERS);
+            displayList = (filterMode !== 'all') ? filteredByFull.filter(s => s.phase === filterMode) : filteredByFull;
         }
 
         displayList.sort((a, b) => {
+            const stableSort = () => a.server_id.localeCompare(b.server_id);
             switch (sortMode) {
-                case 'oldest': return b.age - a.age;
-                case 'newest': return a.age - b.age;
-                case 'player_high': return b.player_count - a.player_count;
-                case 'player_low': return a.player_count - b.player_count;
-                case 'join_order': return (b.joinedAt || 0) - (a.joinedAt || 0);
-                case 'soonest': return a.timeRemaining - b.timeRemaining;
-                case 'furthest': return b.timeRemaining - a.timeRemaining;
-                default: return 0;
+                case 'oldest': return b.rawAge - a.rawAge || stableSort();
+                case 'newest': return a.rawAge - b.rawAge || stableSort();
+                case 'player_high': return b.player_count - a.player_count || stableSort();
+                case 'player_low': return a.player_count - b.player_count || stableSort();
+                case 'join_order': return (b.managedAt || 0) - (a.managedAt || 0) || stableSort();
+                case 'soonest': return a.timeRemaining - b.timeRemaining || stableSort();
+                case 'furthest': return b.timeRemaining - a.timeRemaining || stableSort();
+                default: return stableSort();
             }
         });
 
-        renderStats(processed);
-        if (forceFullRender || serverListContainer.children.length !== displayList.length) fullRenderServers(displayList);
-        else smartUpdateServers(displayList);
+        renderStats(processed.filter(s => !outOfSyncServers.has(s.server_id)));
+        if (forceFullRender || serverListContainer.children.length !== displayList.length) {
+            fullRenderServers(displayList);
+            handleSearch(joinByIdInput.value.trim());
+        } else if (!isSearching) {
+            smartUpdateServers(displayList);
+        }
     }
 
     function renderStats(allServers) {
@@ -259,11 +278,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     function smartUpdateServers(servers) {
         servers.forEach((server, index) => {
             const card = serverListContainer.children[index];
-            if (!card || card.id !== `server-${server.server_id}`) {
-                fullRenderServers(servers);
-                return;
-            }
-            card.className = `server-card status-${server.phase} confidence-${server.confidence}`;
+            if (!card || card.id !== `server-${server.server_id}`) { fullRenderServers(servers); return; }
+            card.className = card.className.split(' ').filter(c => !c.startsWith('status-')).join(' ') + ` status-${server.phase}`;
             card.querySelector('.server-player-count').textContent = `${server.player_count}/${MAX_PLAYERS} Players`;
             card.querySelector('.server-timer').textContent = `${server.timeLabel} ${formatTime(server.timeRemaining)}`;
             card.querySelector('.server-age').textContent = `Age: ${formatAge(server.rawAge)}`;
@@ -271,63 +287,93 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function fullRenderServers(servers) {
-        serverListContainer.innerHTML = '';
-        if (servers.length === 0) {
-            serverListContainer.innerHTML = `<div class="info-box" style="width:100%; text-align:center;">No servers match the current filter.</div>`;
-            return;
-        }
-        servers.forEach(server => serverListContainer.appendChild(createServerCard(server, filterMode === 'joined')));
-
+        serverListContainer.innerHTML = (servers.length === 0) ? `<div class="info-box" style="width:100%; text-align:center;">No servers match the current filter.</div>` : '';
+        servers.forEach(server => serverListContainer.appendChild(createServerCard(server)));
         document.querySelectorAll('.join-btn').forEach(btn => btn.addEventListener('click', handleJoinClick));
-        document.querySelectorAll('.return-btn').forEach(btn => btn.addEventListener('click', handleReturnClick));
+        document.querySelectorAll('.rejoin-btn').forEach(btn => btn.addEventListener('click', handleRejoinClick));
+        document.querySelectorAll('.btn-manage-list').forEach(btn => btn.addEventListener('click', handleManageListClick));
         document.querySelectorAll('.copy-id-icon-btn').forEach(el => el.addEventListener('click', handleCopyId));
     }
 
-    function createServerCard(server, isJoined) {
+    function createServerCard(server) {
         const card = document.createElement('div');
-        card.className = `server-card status-${server.phase} confidence-${server.confidence}`;
+        card.className = `server-card status-${server.phase}`;
         card.id = `server-${server.server_id}`;
+        let buttonsHTML = '';
 
-        let confidenceHTML = '';
-        if (server.confidence === 'medium') confidenceHTML = `<span class="info-item warning-info" title="Timing might be slightly inaccurate"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></span>`;
-        if (server.confidence === 'low') confidenceHTML = `<span class="info-item error-info" title="Timing may be inaccurate"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>?</span>`;
+        if (filterMode === 'joined') {
+            buttonsHTML = `
+                <button class="btn btn-warning btn-manage-list" data-server-id="${server.server_id}">Return</button>
+                <button class="btn btn-success rejoin-btn" data-method="ropro" data-server-id="${server.server_id}">Rejoin</button>
+                <button class="btn btn-secondary rejoin-btn" data-method="copy" data-server-id="${server.server_id}">Copy</button>
+            `;
+        } else if (filterMode === 'excluded') {
+            buttonsHTML = `<button class="btn btn-secondary btn-manage-list" data-server-id="${server.server_id}">Restore</button>`;
+        } else {
+            const actionButtonText = (joinMethod === 'ropro') ? 'Join (RoPro)' : 'Copy URL';
+            const actionButton = `<button class="btn btn-success join-btn" data-server-id="${server.server_id}">${actionButtonText}</button>`;
+            const reportButton = `<button class="btn btn-secondary btn-small btn-mark-sync" title="Mark timer as out of sync" data-server-id="${server.server_id}">Report Sync</button>`;
+            buttonsHTML = `${reportButton}${actionButton}`;
+        }
 
-        let warningHTML = '';
-        if (server.showWarning && server.confidence !== 'low') warningHTML = `<span class="info-item warning-info" title="Server may be off or outdated"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></span>`;
-
-        const joinButtonHTML = `<button class="btn btn-success join-btn" data-server-id="${server.server_id}">Join</button>`;
-        const returnButtonHTML = isJoined ? `<button class="btn btn-warning return-btn" data-server-id="${server.server_id}">Return</button>` : '';
         const copyElementHTML = `<div class="server-id-container"><span title="${server.server_id}">ID: ${server.server_id}</span><button class="copy-id-icon-btn" title="Copy Server ID" data-server-id="${server.server_id}"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button></div>`;
-
-        card.innerHTML = `<div class="server-card-main">
-            <div class="status-dot"></div>
-            <div class="server-details">
-                <div class="server-info">
-                    <span class="info-item server-player-count">${server.player_count}/${MAX_PLAYERS} Players</span>
-                    <span class="info-item server-timer">${server.timeLabel} ${formatTime(server.timeRemaining)}</span>
-                    ${confidenceHTML}${warningHTML}
-                </div>
-                <div class="server-meta-info">
-                    <span class="server-age">Age: ${formatAge(server.rawAge)}</span>
-                    ${copyElementHTML}
-                </div>
-            </div>
-        </div>
-        <div class="server-actions">${joinButtonHTML}${returnButtonHTML}</div>`;
+        card.innerHTML = `<div class="server-card-main"><div class="status-dot"></div><div class="server-details"><div class="server-info"><span class="info-item server-player-count">${server.player_count}/${MAX_PLAYERS} Players</span><span class="info-item server-timer">${server.timeLabel} ${formatTime(server.timeRemaining)}</span></div><div class="server-meta-info"><span class="server-age">Age: ${formatAge(server.rawAge)}</span>${copyElementHTML}</div></div></div><div class="server-actions">${buttonsHTML}</div>`;
+        card.querySelector('.btn-mark-sync')?.addEventListener('click', handleMarkSyncClick);
         return card;
+    }
+
+    function addOrUpdateJoinedServer(serverId) {
+        if (joinedServers.has(serverId)) joinedServers.delete(serverId);
+        joinedServers.set(serverId, { joinedAt: Date.now() });
+        saveJoinedServers();
     }
 
     function handleJoinClick(e) {
         const serverId = e.target.dataset.serverId;
-        joinedServers.set(serverId, { joinedAt: Date.now() });
+        if (joinMethod === 'ropro') {
+            addOrUpdateJoinedServer(serverId);
+            joinWithRoProAPI(serverId);
+            updateAndRender(true);
+        } else {
+            const robloxUrl = `roblox://experiences/start?placeId=${PLACE_ID}&gameInstanceId=${serverId}`;
+            navigator.clipboard.writeText(robloxUrl).then(() => {
+                toast('Copied Roblox join URL!');
+                addOrUpdateJoinedServer(serverId);
+                updateAndRender(true);
+            });
+        }
+    }
+
+    function handleRejoinClick(e) {
+        const serverId = e.target.dataset.serverId;
+        const method = e.target.dataset.method;
+        addOrUpdateJoinedServer(serverId); // Bump to top
+        if (method === 'ropro') {
+            joinWithRoProAPI(serverId);
+            updateAndRender(true);
+        } else {
+            const robloxUrl = `roblox://experiences/start?placeId=${PLACE_ID}&gameInstanceId=${serverId}`;
+            navigator.clipboard.writeText(robloxUrl).then(() => {
+                toast('Copied Roblox join URL!');
+                updateAndRender(true);
+            });
+        }
+    }
+
+    function handleManageListClick(e) {
+        const serverId = e.target.dataset.serverId;
+        if (filterMode === 'joined') joinedServers.delete(serverId);
+        else if (filterMode === 'excluded') outOfSyncServers.delete(serverId);
         saveJoinedServers();
-        safeLaunchRobloxGame(PLACE_ID, serverId);
+        saveOutOfSyncServers();
         updateAndRender(true);
     }
 
-    function handleReturnClick(e) {
-        joinedServers.delete(e.target.dataset.serverId);
-        saveJoinedServers();
+    function handleMarkSyncClick(e) {
+        const serverId = e.currentTarget.dataset.serverId;
+        outOfSyncServers.add(serverId);
+        saveOutOfSyncServers();
+        toast(`Server moved to 'Excluded' list.`);
         updateAndRender(true);
     }
 
@@ -336,39 +382,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         navigator.clipboard.writeText(serverId).then(() => toast(`Copied Server ID`));
     }
 
-    function saveJoinedServers() {
-        localStorage.setItem('joinedMerchantServers', JSON.stringify(Array.from(joinedServers.entries())));
-    }
-
-    function loadJoinedServers() {
-        const stored = localStorage.getItem('joinedMerchantServers');
-        if (stored) joinedServers = new Map(JSON.parse(stored));
-    }
-
-    function showError(msg) {
-        errorContainer.innerHTML = `<div class="info-box error-box">${msg}</div>`;
-        errorContainer.style.display = 'block';
-    }
-
-    function formatTime(s) {
-        const totalSeconds = Math.ceil(Math.max(0, s));
-        const m = Math.floor(totalSeconds / 60);
-        const sec = totalSeconds % 60;
-        return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-    }
-
-    function formatAge(s) {
-        const h = Math.floor(s/3600);
-        const m = Math.floor((s%3600)/60);
-        return h > 0 ? `${h}h ${m}m` : `${m}m`;
-    }
-
-    function initializeCustomSelects() {
-        if (typeof window.initializeCustomSelects === 'function') window.initializeCustomSelects();
-    }
-
-    function toast(message) {
-        if (typeof window.toast === 'function') window.toast(message);
-        else console.log('Toast:', message);
-    }
+    // --- LOCAL STORAGE & UTILS ---
+    function saveJoinedServers() { localStorage.setItem('joinedMerchantServers', JSON.stringify(Array.from(joinedServers.entries()))); }
+    function loadJoinedServers() { const s = localStorage.getItem('joinedMerchantServers'); if (s) joinedServers = new Map(JSON.parse(s)); }
+    function saveOutOfSyncServers() { localStorage.setItem('outOfSyncServers', JSON.stringify(Array.from(outOfSyncServers))); }
+    function loadOutOfSyncServers() { const s = localStorage.getItem('outOfSyncServers'); if (s) outOfSyncServers = new Set(JSON.parse(s)); }
+    function showError(msg) { errorContainer.innerHTML = `<div class="info-box error-box">${msg}</div>`; errorContainer.style.display = 'block'; }
+    function formatTime(s) { const t = Math.ceil(Math.max(0, s)), m = Math.floor(t/60), sec = t%60; return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
+    function formatAge(s) { const h = Math.floor(s/3600), m = Math.floor((s%3600)/60); return h>0 ? `${h}h ${m}m` : `${m}m`; }
+    function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+    function toast(message) { if (typeof window.toast === 'function') window.toast(message); else console.log('Toast:', message); }
 });

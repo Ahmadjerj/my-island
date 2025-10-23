@@ -35,11 +35,18 @@
             <div class="info-box"><p>Upload a screenshot for easy reference. You can drag & drop, paste from your clipboard, or use formats like <code>10k</code>, <code>1.5m</code>, etc.</p></div>
 
             <div class="control-panel" style="margin-bottom: 1.25rem;">
-                <h4>Friends Online Boost</h4>
-                <div class="form-group">
-                    <label for="friends-slider">Friends Online: <span id="friends-count">0</span> (+<span id="friends-boost">0</span>%) <span style="font-style: italic; color: var(--text-muted);">(Boosts Resource Sell Value Only, This is for Maax)</span></label>
+                <h4>Boosts</h4>
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="friends-slider">Friends Online: <span id="friends-count">0</span> (+<span id="friends-boost">0</span>%) <span style="font-style: italic; color: var(--text-muted);">(Boosts Resource Sell Value)</span></label>
                     <input type="range" id="friends-slider" min="0" max="7" value="0" step="1" oninput="updateFriendsSlider(this)">
                 </div>
+                <label class="toggle-switch-group">
+                    <span>Bell Tower Owned (+5% per friend)</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="bell-tower-toggle">
+                        <span class="slider"></span>
+                    </label>
+                </label>
             </div>
 
             <div class="calculator-layout">
